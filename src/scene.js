@@ -1,62 +1,18 @@
-// The setting: marble board, carved frame, candle towers, colonnade and rose window.
+// The setting: marble board, carved frame, candle towers and lighting. The
+// building around them is in cathedral.js.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
+import { canvasTexture, marble } from './textures.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { addCathedral } from './cathedral.js';
+import { createFlame } from './effects/flame.js';
+import { addFrame } from './frame.js';
+import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
 
-function seededRandom(seed) {
-  return () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-}
-
-function canvasTexture(size, draw) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  draw(canvas.getContext('2d'), size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-function marble(base, vein, seed) {
-  const random = seededRandom(seed);
-  return canvasTexture(1024, (ctx, size) => {
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 500; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const r = 20 + random() * 110;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, random() > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.09)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    ctx.strokeStyle = vein;
-    for (let i = 0; i < 46; i++) {
-      let x = random() * size;
-      let y = random() * size;
-      let angle = random() * Math.PI * 2;
-      ctx.lineWidth = 0.5 + random() * 2.2;
-      ctx.globalAlpha = 0.15 + random() * 0.4;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      for (let step = 0; step < 36; step++) {
-        angle += (random() - 0.5) * 0.9;
-        x += Math.cos(angle) * 12;
-        y += Math.sin(angle) * 12;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  });
-}
-
-function addBoard(scene) {
+function addBoard(scene, environment) {
   const textures = {
     light: marble('#a99d8a', '#4f4338', 7),
     dark: marble('#2b151b', '#9b6a63', 91),
@@ -79,35 +35,18 @@ function addBoard(scene) {
     scene.add(tile);
   }
 
-  const stone = new THREE.MeshStandardMaterial({ color: 0x1d1a20, roughness: 0.62, metalness: 0.25 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0x8d7038, roughness: 0.38, metalness: 0.95 });
-  const slab = (size, height, y, material) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, height, size), material);
-    mesh.position.y = y;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
-  };
-  // Frame rails sit around the squares; the plinth steps sit below them.
-  for (let side = 0; side < 4; side++) {
-    const rail = new THREE.Group();
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.24, 0.45), stone);
-    beam.position.set(0.225, -0.09, 4.225);
-    beam.receiveShadow = true;
-    const inlay = new THREE.Mesh(new THREE.BoxGeometry(8.1, 0.025, 0.035), gold);
-    inlay.position.set(0, 0.035, 4.035);
-    rail.add(beam, inlay);
-    rail.rotation.y = side * Math.PI / 2;
-    scene.add(rail);
-  }
-  slab(9.15, 0.16, -0.29, gold);
-  slab(9.5, 0.4, -0.55, stone);
+  addFrame(scene, environment);
 
   const label = (text) => {
     const map = canvasTexture(128, (ctx) => {
-      ctx.fillStyle = '#c9ad6a';
-      ctx.font = '600 86px "EB Garamond", Georgia, serif';
+      ctx.font = '600 88px "EB Garamond", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 9;
+      ctx.strokeStyle = 'rgba(8,6,10,0.85)';
+      ctx.strokeText(text, 64, 68);
+      ctx.fillStyle = '#e3d6b6';
       ctx.fillText(text, 64, 68);
     });
     return new THREE.Mesh(
@@ -119,9 +58,9 @@ function addBoard(scene) {
   for (let i = 0; i < 8; i++) {
     for (const side of [1, -1]) {
       const file = label('abcdefgh'[i]);
-      file.position.set(i - 3.5, 0.034, side * 4.25);
+      file.position.set(i - 3.5, 0.038, side * 4.265);
       const rank = label(String(i + 1));
-      rank.position.set(-side * 4.25, 0.034, 3.5 - i);
+      rank.position.set(-side * 4.265, 0.038, 3.5 - i);
       labels.push(file, rank);
     }
   }
@@ -135,151 +74,84 @@ function addBoard(scene) {
   };
 }
 
+// Four stone stands, each carrying three candles. A stand's stone and wax are
+// merged into one mesh apiece.
 function addCandleTowers(scene) {
-  const stone = new THREE.MeshStandardMaterial({ color: 0x25212a, roughness: 0.8, flatShading: true });
-  const wax = new THREE.MeshStandardMaterial({ color: 0xcfc3a4, roughness: 0.7, emissive: 0x2a1c08 });
-  const flame = new THREE.MeshBasicMaterial({ color: 0xffb547 });
-  const flames = [];
+  const stone = new THREE.MeshLambertMaterial({ color: 0x3a342f, flatShading: true, reflectivity: 0 });
+  const wax = new THREE.MeshLambertMaterial({ color: 0xcfc3a4, emissive: 0x2a1c08, reflectivity: 0 });
+  const wick = new THREE.MeshBasicMaterial({ color: 0x140d08 });
+  const at = (geometry, y, x = 0, z = 0) => geometry.translate(x, y, z);
+  const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
+
+  const stand = [
+    at(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), -0.65),
+    at(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), 0.25),
+    at(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), 1.1),
+  ];
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    stand.push(at(new THREE.ConeGeometry(0.07, 0.55, 4), 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32));
+  }
+  const parts = [
+    [mergeGeometries(stand), stone],
+    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.055, 0.065, h, 10), 1.2 + h / 2, x, z))), wax],
+    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.006, 0.008, 0.045, 5), 1.22 + h, x, z))), wick],
+  ];
+
+  const towers = [];
+  let seed = 1;
   for (const x of [-5.7, 5.7]) {
     for (const z of [-5.7, 5.7]) {
       const tower = new THREE.Group();
-      const part = (geometry, material, y, px = 0, pz = 0) => {
+      for (const [geometry, material] of parts) {
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(px, y, pz);
-        mesh.castShadow = material !== flame;
+        mesh.castShadow = material === stone;
         tower.add(mesh);
-        return mesh;
-      };
-      part(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), stone, -0.65);
-      part(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), stone, 0.25);
-      part(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), stone, 1.1);
-      for (let i = 0; i < 4; i++) {
-        const a = Math.PI / 4 + i * Math.PI / 2;
-        part(new THREE.ConeGeometry(0.07, 0.55, 4), stone, 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32);
       }
-      const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
-      for (const [cx, cz, h] of candles) {
-        part(new THREE.CylinderGeometry(0.055, 0.065, h, 10), wax, 1.2 + h / 2, cx, cz);
-        const tip = part(new THREE.SphereGeometry(0.036, 10, 8), flame, 1.26 + h, cx, cz);
-        tip.scale.y = 2.1;
-        flames.push(tip);
-      }
+      const flames = candles.map(([cx, cz, h]) => {
+        const flame = createFlame(seed++);
+        flame.object.position.set(cx, 1.245 + h, cz);
+        tower.add(flame.object);
+        return flame;
+      });
       const light = new THREE.PointLight(0xff8c2e, 9, 12, 1.8);
       light.position.set(0, 2.15, 0);
       tower.add(light);
       tower.position.set(x, 0, z);
-      tower.userData.light = light;
       scene.add(tower);
-      flames.push(tower);
+      towers.push({ flames, light });
     }
   }
+
   return (time) => {
-    flames.forEach((object, i) => {
-      const flicker = 1 + Math.sin(time * 9 + i * 1.7) * 0.07 + Math.sin(time * 23 + i * 4.1) * 0.05;
-      if (object.userData.light) object.userData.light.intensity = 9 * flicker;
-      else object.scale.set(1, 2.1 * flicker, 1);
-    });
+    for (const { flames, light } of towers) {
+      // The light follows the average of its own three flames.
+      let strength = 0;
+      let leanX = 0;
+      let leanZ = 0;
+      for (const flame of flames) {
+        const state = flame.update(time);
+        strength += state.strength / flames.length;
+        leanX += state.swayX / flames.length;
+        leanZ += state.swayZ / flames.length;
+      }
+      // Exaggerated a little, or the flicker would be lost on the stone.
+      light.intensity = 9 * Math.max(0.4, 1 + (strength - 1) * 1.6);
+      light.position.set(leanX * 2.5, 2.15 + (strength - 1) * 0.12, leanZ * 2.5);
+    }
   };
 }
 
-function roseWindowTexture() {
-  const colors = ['#7d1128', '#1f3a8a', '#5b1a78', '#0f5a4a', '#a8761a'];
-  return canvasTexture(1024, (ctx, size) => {
-    const c = size / 2;
-    ctx.translate(c, c);
-    const petal = (count, inner, outer, shift) => {
-      for (let i = 0; i < count; i++) {
-        ctx.save();
-        ctx.rotate((i / count) * Math.PI * 2);
-        const half = Math.tan(Math.PI / count) * outer * 0.72;
-        ctx.beginPath();
-        ctx.moveTo(0, -inner);
-        ctx.quadraticCurveTo(half * 1.3, -(inner + outer) / 2, 0, -outer);
-        ctx.quadraticCurveTo(-half * 1.3, -(inner + outer) / 2, 0, -inner);
-        ctx.fillStyle = colors[(i + shift) % colors.length];
-        ctx.fill();
-        ctx.lineWidth = 9;
-        ctx.strokeStyle = '#08060a';
-        ctx.stroke();
-        ctx.restore();
-      }
-    };
-    petal(24, 340, 490, 1);
-    petal(16, 190, 355, 0);
-    petal(8, 60, 215, 2);
-    ctx.lineWidth = 16;
-    ctx.strokeStyle = '#3a3340';
-    for (const r of [60, 345, 498]) {
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#b98a22';
-    ctx.beginPath();
-    ctx.arc(0, 0, 52, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
-function addCathedral(scene) {
-  const stone = new THREE.MeshStandardMaterial({ color: 0x1b1822, roughness: 0.95, flatShading: true });
-
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(60, 64),
-    new THREE.MeshStandardMaterial({ color: 0x0d0b10, roughness: 0.85, metalness: 0.15 }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.8;
-  floor.receiveShadow = true;
-  scene.add(floor);
-
-  const columns = 16;
-  const radius = 23;
-  const shaft = new THREE.CylinderGeometry(0.55, 0.68, 8, 8);
-  const capital = new THREE.CylinderGeometry(0.9, 0.55, 0.6, 8);
-  // One side of a pointed arch, spanning half the gap between two columns.
-  const span = 2 * radius * Math.sin(Math.PI / columns);
-  const half = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(-span / 2, 0, 0),
-    new THREE.Vector3(-span / 2, 2.9, 0),
-    new THREE.Vector3(0, 3.9, 0),
-  );
-  const archGeometry = new THREE.TubeGeometry(half, 20, 0.26, 8);
-  for (let i = 0; i < columns; i++) {
-    const angle = ((i + 0.5) / columns) * Math.PI * 2;
-    const column = new THREE.Mesh(shaft, stone);
-    column.position.set(Math.sin(angle) * radius, 3.2, Math.cos(angle) * radius);
-    const top = new THREE.Mesh(capital, stone);
-    top.position.copy(column.position).setY(7.4);
-    scene.add(column, top);
-
-    const mid = (i / columns) * Math.PI * 2;
-    const arch = new THREE.Group();
-    const left = new THREE.Mesh(archGeometry, stone);
-    const right = new THREE.Mesh(archGeometry, stone);
-    right.scale.x = -1;
-    arch.add(left, right);
-    const apothem = radius * Math.cos(Math.PI / columns);
-    arch.position.set(Math.sin(mid) * apothem, 7.5, Math.cos(mid) * apothem);
-    arch.rotation.y = mid;
-    scene.add(arch);
-  }
-
-  const glass = roseWindowTexture();
-  for (const z of [-1, 1]) {
-    const window = new THREE.Mesh(
-      new THREE.CircleGeometry(4.2, 64),
-      new THREE.MeshBasicMaterial({ map: glass, transparent: true, fog: false, color: 0x9a93a8 }),
-    );
-    window.position.set(0, 5.2, z * 26);
-    window.rotation.y = z > 0 ? Math.PI : 0;
-    scene.add(window);
-  }
+// ?quality=high or ?quality=low fixes the level instead of measuring it.
+function qualityOptions() {
+  const wanted = new URLSearchParams(window.location.search).get('quality');
+  if (wanted === 'high') return { level: 0, maxLevel: 0 };
+  if (wanted === 'low') return { level: 3 };
+  return {};
 }
 
 export function createScene(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -287,15 +159,17 @@ export function createScene(container) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x08060d);
-  scene.fog = new THREE.FogExp2(0x08060d, 0.022);
+  scene.background = new THREE.Color(0x07050b);
+  scene.fog = new THREE.FogExp2(0x0a0710, 0.017);
 
+  // Reflections for the pieces and the polished squares. The stone of the
+  // setting is matte and takes none of it.
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.38;
+  scene.environmentIntensity = 0.34;
 
-  scene.add(new THREE.HemisphereLight(0x8c93c4, 0x2a1810, 0.75));
-  const moon = new THREE.DirectionalLight(0xcfd8ff, 2.1);
+  scene.add(new THREE.HemisphereLight(0x8c93c4, 0x2a1810, 0.55));
+  const moon = new THREE.DirectionalLight(0xcfd8ff, 1.85);
   moon.position.set(-6, 13, 4);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
@@ -305,22 +179,53 @@ export function createScene(container) {
   scene.add(moon);
   // Colored rim light, as if through stained glass, to separate the black pieces.
   for (const [color, x, z] of [[0xb0304a, 9, -7], [0x4a52d0, -9, -7], [0x8040a0, 0, 10]]) {
-    const rim = new THREE.DirectionalLight(color, 1.15);
+    const rim = new THREE.DirectionalLight(color, 0.8);
     rim.position.set(x, 5, z);
     scene.add(rim);
   }
+  // A soft lamp over the crossing keeps the board the brightest thing in view.
+  const lamp = new THREE.SpotLight(0xffe6c4, 130, 40, 0.5, 0.7, 1.6);
+  lamp.position.set(0, 17, 0);
+  scene.add(lamp, lamp.target);
 
-  const orientLabels = addBoard(scene);
+  const orientLabels = addBoard(scene, scene.environment);
   const flickerCandles = addCandleTowers(scene);
-  addCathedral(scene);
+  const cathedral = addCathedral(scene);
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
+
+  const quality = createQualityGovernor((level) => {
+    const ratio = Math.min(window.devicePixelRatio, [2, 1.25, 1, 0.85][level]);
+    renderer.setPixelRatio(ratio);
+    const shadowSize = level === 0 ? 2048 : 1024;
+    if (moon.shadow.mapSize.width !== shadowSize) {
+      moon.shadow.mapSize.set(shadowSize, shadowSize);
+      moon.shadow.map?.dispose();
+      moon.shadow.map = null;
+    }
+    cathedral.setShafts(level < 2);
+    moon.castShadow = level < 3;
+  }, qualityOptions());
+
+  // At low camera angles, shift the view upward like an architect's lens, so
+  // the height of the nave shows and its verticals stay upright.
+  let shift = 0;
+  const raiseView = () => {
+    const polar = Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1));
+    const next = THREE.MathUtils.smoothstep(polar, 0.9, 1.44) * 0.3;
+    const { clientWidth: width, clientHeight: height } = container;
+    if (!width || !height || (Math.abs(next - shift) < 0.0005 && camera.view?.fullHeight === height)) return;
+    shift = next;
+    camera.setViewOffset(width, height, 0, -shift * height, width, height);
+  };
 
   return {
-    renderer, scene, camera,
-    update(time) {
+    renderer, scene, camera, quality,
+    update(time, elapsed) {
+      quality.frame(elapsed);
       flickerCandles(time);
       orientLabels(camera.position.z);
+      raiseView();
     },
   };
 }
@@ -358,6 +263,21 @@ export function createBestMoveArrow(scene) {
     return new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
   };
 
+  // A knight's L, as a single outline so the layers never double up at the corner.
+  const angled = (dx, dz, style) => {
+    // Shape y becomes world -z once the shape is laid flat.
+    const points = knightArrowOutline(dx, dz, style).map(([x, z]) => new THREE.Vector2(x, -z));
+    return new THREE.ShapeGeometry(new THREE.Shape(points)).rotateX(-Math.PI / 2);
+  };
+
+  const add = (halfGlow, solid) => {
+    for (const [geometry, look] of [[halfGlow, halo], [solid, core]]) {
+      const mesh = new THREE.Mesh(geometry, look);
+      mesh.renderOrder = 3;
+      arrow.add(mesh);
+    }
+  };
+
   return {
     // move: { from, to } or null to hide.
     show(move) {
@@ -367,15 +287,18 @@ export function createBestMoveArrow(scene) {
       if (!move) return;
       const from = squarePosition(move.from);
       const direction = squarePosition(move.to).sub(from);
-      const length = direction.length() - 0.1;
-      for (const [geometry, look] of [
-        [outline(length, 0.13, 0.34, 0.5), halo],
-        [outline(length - 0.05, 0.065, 0.25, 0.4), core],
-      ]) {
-        const mesh = new THREE.Mesh(geometry, look);
-        mesh.renderOrder = 3;
-        arrow.add(mesh);
+      if (isKnightShift(move.from, move.to)) {
+        const { x, z } = direction;
+        add(
+          angled(x, z, { start: 0.2, reach: 0.1, shaft: 0.13, head: 0.34, headLength: 0.5 }),
+          angled(x, z, { start: 0.2, reach: 0.05, shaft: 0.065, head: 0.25, headLength: 0.4 }),
+        );
+        arrow.position.copy(from).setY(0.06);
+        arrow.rotation.y = 0;
+        return;
       }
+      const length = direction.length() - 0.1;
+      add(outline(length, 0.13, 0.34, 0.5), outline(length - 0.05, 0.065, 0.25, 0.4));
       arrow.position.copy(from).addScaledVector(direction.normalize(), 0.2).setY(0.06);
       arrow.rotation.y = Math.atan2(-direction.x, -direction.z);
     },

@@ -103,6 +103,10 @@ button:hover:not(:disabled), button:focus-visible { border-color: var(--gold); c
 button:disabled { opacity: 0.35; cursor: default; }
 input { accent-color: var(--gold); }
 
+.audio { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; color: var(--dim); }
+.audio label { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.audio input[type='range'] { width: 100%; min-width: 0; }
+
 .hint { margin: 0; color: var(--dim); font-size: 14px; text-align: center; }
 
 dialog {
@@ -131,7 +135,8 @@ dialog h2 { color: var(--gold); font-size: 18px; letter-spacing: 0.1em; }
 .review-only { display: none; }
 body.reviewing .review-only { display: block; }
 body.reviewing .captures,
-body.reviewing .controls { display: none; }
+body.reviewing .controls,
+body.reviewing .hint { display: none; }
 body.reviewing #panel { overflow-y: auto; }
 body.reviewing .log { min-height: 150px; }
 

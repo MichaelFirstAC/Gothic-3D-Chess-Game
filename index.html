@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <main id="stage" aria-label="3D chess board. Drag to rotate, scroll to zoom, click a piece and then a square to move.">
+  <main id="stage" aria-label="3D chess board. Drag or use A and D to rotate, W and S to tilt, scroll or use Q and E to zoom. Click a piece and then a square to move.">
     <div id="eval-bar" role="img" hidden>
       <div id="eval-fill"></div>
       <span id="eval-label"></span>
@@ -75,7 +75,14 @@
       <label><input type="checkbox" id="auto-turn"> Turn board after each move</label>
     </section>
 
-    <p class="hint">Drag to rotate &middot; scroll to zoom &middot; right-drag to pan</p>
+    <section class="audio" aria-label="Audio">
+      <label><input type="checkbox" id="sound-mute"> Mute sound</label>
+      <input type="range" id="sound-volume" min="0" max="100" step="1" aria-label="Sound volume">
+      <label><input type="checkbox" id="music-on"> Music</label>
+      <input type="range" id="music-volume" min="0" max="100" step="1" aria-label="Music volume">
+    </section>
+
+    <p class="hint">Drag or A/D to rotate &middot; W/S to tilt &middot; scroll or Q/E to zoom &middot; right-drag to pan</p>
   </aside>
 
   <dialog id="dialog" aria-labelledby="dialog-title">

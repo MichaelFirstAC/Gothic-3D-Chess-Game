@@ -1,10 +1,13 @@
 // Connects the rules engine to the 3D board and the side panel.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Game, inCheck, colorOf, squareName } from './engine.js';
+import { Game, inCheck, colorOf, squareName, applyMove, legalMoves } from './engine.js';
 import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
+import { createBoardView } from './boardView.js';
+import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
+import { createKeyTracker, steerCamera } from './keyCamera.js';
 import { openImportDialog } from './importDialog.js';
 
 const NAMES = { w: 'White', b: 'Black' };
@@ -14,7 +17,7 @@ const VALUE_ORDER = 'qrbnp';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
-const { renderer, scene, camera, update } = createScene(stage);
+const { renderer, scene, camera, update, quality } = createScene(stage);
 const highlights = createHighlights(scene);
 const bestArrow = createBestMoveArrow(scene);
 const makePiece = createPieceFactory();
@@ -27,50 +30,16 @@ let busy = false; // true while a piece is moving or a promotion is being chosen
 
 // ---------------------------------------------------------------- pieces
 
-const board = new THREE.Group();
-const graveyard = new THREE.Group();
-scene.add(board, graveyard);
-const meshes = new Map(); // square -> piece object
+const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let forceReducedMotion = false; // development aid
+const audio = createAudio();
+const boardView = createBoardView({
+  scene, makePiece, sound: (name) => audio.play(name), reducedMotion: () => motion.matches || forceReducedMotion,
+});
 
-function placePiece(piece, square) {
-  const mesh = makePiece(piece);
-  mesh.position.copy(squarePosition(square));
-  mesh.userData.square = square;
-  board.add(mesh);
-  meshes.set(square, mesh);
-}
+const syncPieces = (state = game.state, history = game.history) => boardView.sync(state, history);
 
-// Captured pieces stand in two rows beside the board, on their captor's side.
-function refreshGraveyard(history = game.history) {
-  graveyard.clear();
-  const counts = { w: 0, b: 0 };
-  for (const { move } of history) {
-    if (!move.captured) continue;
-    const captor = colorOf(move.piece);
-    const index = counts[captor]++;
-    const side = captor === 'w' ? 1 : -1;
-    const mesh = makePiece(move.captured);
-    mesh.scale.setScalar(0.58);
-    mesh.position.set(
-      side * (5.35 + Math.floor(index / 8) * 0.55),
-      -0.8,
-      side * (3.6 - (index % 8) * 0.6),
-    );
-    graveyard.add(mesh);
-  }
-}
-
-let boardVersion = 0; // bumped whenever the pieces are rebuilt from scratch
-
-function syncPieces(state = game.state, history = game.history) {
-  boardVersion++;
-  board.clear();
-  meshes.clear();
-  state.board.forEach((piece, square) => piece && placePiece(piece, square));
-  refreshGraveyard(history);
-}
-
-// ---------------------------------------------------------------- animation
+// ---------------------------------------------------------------- camera moves
 
 const tweens = new Set();
 
@@ -86,56 +55,6 @@ function runTweens(now) {
       tweens.delete(item);
       item.resolve();
     }
-  }
-}
-
-function slide(mesh, to, hop) {
-  const from = mesh.position.clone();
-  const target = squarePosition(to);
-  const distance = from.distanceTo(target);
-  mesh.userData.square = to;
-  return tween(260 + distance * 65, (t) => {
-    mesh.position.lerpVectors(from, target, t);
-    mesh.position.y = Math.sin(t * Math.PI) * hop;
-  });
-}
-
-async function animateMove(move) {
-  const version = boardVersion;
-  const mover = meshes.get(move.from);
-  const victimSquare = move.flag === 'ep' ? move.to + (colorOf(move.piece) === 'w' ? -8 : 8) : move.to;
-  const victim = move.captured ? meshes.get(victimSquare) : null;
-  meshes.delete(move.from);
-  if (victim) meshes.delete(victimSquare);
-
-  const jobs = [slide(mover, move.to, move.piece.toLowerCase() === 'n' ? 1.7 : 0.12)];
-  if (move.flag === 'castle-short' || move.flag === 'castle-long') {
-    const short = move.flag === 'castle-short';
-    const rookFrom = short ? move.to + 1 : move.to - 2;
-    const rook = meshes.get(rookFrom);
-    const rookTo = short ? move.to - 1 : move.to + 1;
-    meshes.delete(rookFrom);
-    meshes.set(rookTo, rook);
-    jobs.push(slide(rook, rookTo, 1.5));
-  }
-  if (victim) {
-    jobs.push(tween(460, (t) => {
-      const sink = Math.max(0, t - 0.4) / 0.6;
-      victim.position.y = -sink * 0.9;
-      victim.scale.setScalar(1 - sink * 0.85);
-    }));
-  }
-  await Promise.all(jobs);
-  // The board was rebuilt mid-move, so these pieces are no longer on it.
-  if (version !== boardVersion) return;
-  if (victim) board.remove(victim);
-  meshes.set(move.to, mover);
-  if (move.promotion) {
-    board.remove(mover);
-    const piece = colorOf(move.piece) === 'w' ? move.promotion.toUpperCase() : move.promotion;
-    placePiece(piece, move.to);
-    const crowned = meshes.get(move.to);
-    await tween(420, (t) => crowned.scale.setScalar(0.3 + 0.7 * t));
   }
 }
 
@@ -179,6 +98,18 @@ function turnCamera(side) {
       .add(controls.target);
     camera.lookAt(controls.target);
   }).then(() => { controls.enabled = true; });
+}
+
+const cameraKeys = createKeyTracker(window, () => $('dialog').open);
+
+function steerFromKeys(seconds) {
+  if (!cameraKeys.size) return;
+  cameraMoved = true;
+  const offset = camera.position.clone().sub(controls.target);
+  const next = steerCamera(new THREE.Spherical().setFromVector3(offset), cameraKeys, seconds, controls);
+  camera.position
+    .setFromSpherical(new THREE.Spherical(next.radius, next.phi, next.theta))
+    .add(controls.target);
 }
 
 function resize() {
@@ -328,10 +259,13 @@ async function announceResult() {
 const review = createReviewMode({
   sync: syncPieces,
   async animate(move, history) {
-    const version = boardVersion;
-    await animateMove(move);
-    if (version === boardVersion) refreshGraveyard(history);
+    const version = boardView.version;
+    await boardView.animateMove(move, history);
+    if (version !== boardView.version) return;
+    const after = applyMove(history.at(-1).state, move);
+    if (inCheck(after)) audio.play(legalMoves(after).length ? 'check' : 'checkmate');
   },
+  unanimate: (entry, history) => boardView.animateUndo(entry, history),
   mark: (marks) => highlights.show(marks),
   arrow: (move) => bestArrow.show(move),
   moveList: renderMoveList,
@@ -399,12 +333,25 @@ async function makeMove(from, to) {
   selected = -1;
   hovered = -1;
   render();
-  await animateMove(move);
-  refreshGraveyard();
+  const { settled } = await boardView.animateMove(move, game.history);
+  soundVerdict();
   if (!game.result && $('auto-turn').checked) await turnCamera(game.state.turn);
   busy = false;
   render();
-  announceResult();
+  await announceAfter(settled);
+}
+
+function soundVerdict() {
+  if (game.result) audio.play(resultSound(game.result));
+  else if (inCheck(game.state)) audio.play('check');
+}
+
+// A game that ends on a capture waits for the pieces to settle before the dialog.
+async function announceAfter(settled) {
+  const finished = game;
+  const moves = game.history.length;
+  await settled;
+  if (game === finished && game.history.length === moves && !busy && !review.active) announceResult();
 }
 
 function newGame() {
@@ -430,7 +377,7 @@ function pickSquare(event) {
   ), camera);
 
   let onPiece = -1;
-  const hit = raycaster.intersectObjects(board.children, true)[0];
+  const hit = raycaster.intersectObjects(boardView.pieces.children, true)[0];
   if (hit) {
     let object = hit.object;
     while (object.userData.square === undefined) object = object.parent;
@@ -460,9 +407,18 @@ const isOwnPiece = (square) => {
 
 function handleSquare(square) {
   if (busy || review.active) return;
-  if (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)) makeMove(selected, square);
-  else if (square >= 0 && square !== selected && isOwnPiece(square)) select(square);
-  else select(-1);
+  if (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)) {
+    makeMove(selected, square);
+  } else if (square >= 0 && square !== selected && isOwnPiece(square)) {
+    audio.play('select');
+    select(square);
+  } else {
+    // A thud for trying something the rules do not allow.
+    const triedToMove = selected >= 0 && square >= 0 && square !== selected;
+    const touchedEnemy = square >= 0 && square !== selected && Boolean(game.state.board[square]) && !game.result;
+    if (triedToMove || touchedEnemy) audio.play('illegal');
+    select(-1);
+  }
 }
 
 let press = null;
@@ -498,10 +454,21 @@ $('new-game').addEventListener('click', async () => {
   newGame();
 });
 
-$('undo').addEventListener('click', () => {
-  game.undo();
-  selected = -1;
+// Take-back plays the move in reverse. Clicks made while it runs are ignored.
+$('undo').addEventListener('click', async () => {
+  if (busy || review.active) return;
+  const taken = game.undo();
+  selected = hovered = -1;
+  if (!taken) {
+    render();
+    return;
+  }
+  busy = true;
+  render();
+  await boardView.animateUndo(taken, game.history);
+  // A safety net: whatever the animation did, the board ends up exact.
   syncPieces();
+  busy = false;
   render();
   if ($('auto-turn').checked) turnCamera(game.state.turn);
 });
@@ -511,6 +478,7 @@ $('claim').addEventListener('click', async () => {
   if (current) {
     if (!(await confirmAction('Claim draw', `Claim a draw by ${current}?`, 'Claim'))) return;
     game.claimDraw(current);
+    soundVerdict();
   } else {
     // FIDE lets a player claim by declaring the move that will qualify.
     const options = game.intendedDrawClaims();
@@ -524,9 +492,12 @@ $('claim').addEventListener('click', async () => {
     selected = -1;
     busy = true;
     render();
-    await animateMove(move);
+    const { settled } = await boardView.animateMove(move, game.history);
+    soundVerdict();
     busy = false;
-    refreshGraveyard();
+    render();
+    await announceAfter(settled);
+    return;
   }
   selected = -1;
   render();
@@ -539,6 +510,7 @@ $('offer').addEventListener('click', async () => {
     `${NAMES[offerer]} offers a draw. ${NAMES[offerer === 'w' ? 'b' : 'w']}, do you accept?`, 'Accept', 'Decline');
   if (!accepted) return;
   game.agreeDraw();
+  soundVerdict();
   selected = -1;
   render();
   announceResult();
@@ -548,6 +520,7 @@ $('resign').addEventListener('click', async () => {
   const loser = game.state.turn;
   if (!(await confirmAction('Resign', `${NAMES[loser]}, do you concede the game?`, 'Resign'))) return;
   game.resign(loser);
+  soundVerdict();
   selected = -1;
   render();
   announceResult();
@@ -565,12 +538,44 @@ $('auto-turn').addEventListener('change', (event) => {
   if (event.target.checked && controls.enabled) turnCamera(game.state.turn);
 });
 
+// ---------------------------------------------------------------- audio
+
+// Browsers only allow sound after the viewer has clicked or pressed a key.
+for (const type of ['pointerdown', 'keydown']) {
+  window.addEventListener(type, () => audio.unlock(), { capture: true });
+}
+document.addEventListener('click', (event) => {
+  if (event.target.closest?.('#panel button, #dialog button')) audio.play('click');
+});
+
+$('sound-mute').checked = audio.settings.muted;
+$('sound-volume').value = Math.round(audio.settings.volume * 100);
+$('sound-mute').addEventListener('change', (event) => audio.set({ muted: event.target.checked }));
+$('sound-volume').addEventListener('input', (event) => audio.set({ volume: event.target.value / 100 }));
+$('sound-volume').addEventListener('change', () => audio.play('place'));
+
+$('music-on').checked = audio.settings.music;
+$('music-volume').value = Math.round(audio.settings.musicVolume * 100);
+$('music-on').addEventListener('change', (event) => {
+  audio.unlock();
+  audio.set({ music: event.target.checked });
+});
+$('music-volume').addEventListener('input', (event) => audio.set({ musicVolume: event.target.value / 100 }));
+
 // ---------------------------------------------------------------- start
 
+let lastFrame = 0;
 renderer.setAnimationLoop((now) => {
+  const elapsed = lastFrame ? now - lastFrame : 0;
+  lastFrame = now;
   runTweens(performance.now());
-  if (controls.enabled) controls.update();
-  update(now / 1000);
+  boardView.update(elapsed / 1000);
+  if (controls.enabled) {
+    // A long gap between frames must not fling the camera.
+    steerFromKeys(Math.min(elapsed, 50) / 1000);
+    controls.update();
+  }
+  update(now / 1000, elapsed);
   highlights.pulse(now / 1000);
   bestArrow.pulse(now / 1000);
   renderer.render(scene, camera);
@@ -579,19 +584,26 @@ renderer.setAnimationLoop((now) => {
 resize();
 syncPieces();
 render();
+// After the first frames, get the capture effects ready.
+const prepared = new Promise((resolve) => setTimeout(resolve, 150))
+  .then(() => boardView.prepare(renderer, camera))
+  .catch((error) => console.warn('Effects could not be prepared early:', error));
 
 // Development-only handle for driving the board from the console.
 if (import.meta.env.DEV) {
   window.chessDebug = {
     get game() { return game; },
     review,
-    // True when the pieces on screen match `state` exactly, with no strays.
-    boardMatches(state) {
-      return board.children.length === meshes.size && state.board.every((piece, square) => {
-        const mesh = meshes.get(square);
-        return piece ? Boolean(mesh) && mesh.position.distanceTo(squarePosition(square)) < 1e-6 : !mesh;
-      });
-    },
+    // True when the pieces on screen match `state` (and the graveyard matches
+    // `history`) exactly, with no strays.
+    boardMatches: (state, history) => boardView.matches(state, history),
+    boardView,
+    audio,
+    renderer,
+    renderNow: () => renderer.render(scene, camera),
+    prepared: () => prepared,
+    move: (from, to) => makeMove(from, to),
+    reduceMotion: (value) => { forceReducedMotion = value; },
     // Screen position of a square, for simulating real clicks.
     screenPoint(square, height = 0) {
       const v = squarePosition(square).setY(height).project(camera);
@@ -600,5 +612,8 @@ if (import.meta.env.DEV) {
     },
     camera,
     controls,
+    arrow: bestArrow,
+    quality,
+    info: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries }),
   };
 }
