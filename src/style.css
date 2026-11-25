@@ -135,7 +135,8 @@ dialog h2 { color: var(--gold); font-size: 18px; letter-spacing: 0.1em; }
 .review-only { display: none; }
 body.reviewing .review-only { display: block; }
 body.reviewing .captures,
-body.reviewing .controls { display: none; }
+body.reviewing .controls,
+body.reviewing .hint { display: none; }
 body.reviewing #panel { overflow-y: auto; }
 body.reviewing .log { min-height: 150px; }
 

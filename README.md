@@ -1,6 +1,6 @@
 # Gothic Chess
 
-A two-player 3D chess game with a gothic set, built with Three.js. All models and textures are generated in code. **The Inquisition** reviews your games: Stockfish rates every move and the panel comments on each one in plain language. With a free Groq key, an AI model explains the key mistakes.
+A two-player 3D chess game with a gothic set in a gothic cathedral, built with Three.js. All models, textures and sounds are generated in code; there are no model, texture or audio files. **The Inquisition** reviews your games: Stockfish rates every move and the panel comments on each one in plain language. With a free Groq key, an AI model explains the key mistakes.
 
 ## Run
 
@@ -37,6 +37,31 @@ A variable already set in your system environment takes priority over `.env`. `.
 - Click a piece, then a highlighted square. Green dots are moves, red rings are captures.
 - Drag to rotate, scroll to zoom, right-drag to pan.
 - **Flip board** swaps sides; **Turn board after each move** does it automatically.
+
+## The setting
+
+- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. Drag downward to a low angle to look up the nave. At low angles the view shifts upward, so the height shows while the verticals stay upright.
+- **Candles** have shader-drawn flames. Each stand's light flickers with the same noise as its flames.
+- **The board** keeps its marble squares, set in a carved stone frame on a chipped limestone plinth.
+
+## Animations
+
+- **Capture:** the piece is crushed, shatters, sinks into the board, and gathers itself again beside the board.
+- **Promotion:** the pawn cracks and sinks, then the new piece is built from fragments rising out of the square.
+- **Take back:** the move plays in reverse, including the rook when castling, and captured pieces return from beside the board. In review, stepping back one move does the same; longer jumps are instant. Extra clicks while it runs are ignored.
+- **Best-move arrow:** knight moves are drawn as an L, long leg first.
+
+If your system asks for **reduced motion**, shattering, promotion and take-back become short fades and quick slides without hops.
+
+## Sound and music
+
+The controls are at the bottom of the panel. **Mute sound** and the volume slider next to it govern sound effects: selecting, moving (knights sound different), castling, capturing, reforming, promoting, check, checkmate, stalemate and draws, taking back, illegal clicks and panel buttons. **Music** is a separate toggle with its own volume, **off by default**: a slow organ drone that moves among D Dorian and Aeolian chords every 8 to 16 seconds, with an occasional distant choir. It fades in and out over two seconds and dips under sound effects. Both sets of settings are remembered in your browser.
+
+**All audio is synthesised** with the Web Audio API and played through a generated cathedral reverb of about four seconds. Browsers only allow audio after your first click or key press. To replace a sound with a recording you have the rights to use (a CC0 file, for example), put it in `public/sounds/` and list it in `SOUND_FILES` in `src/audio.js`; nothing else needs to change.
+
+## Performance
+
+Repeated parts of the building are instanced. The game measures its frame times and, if they stay slow, steps down in stages: lower resolution and smaller shadows, then no light shafts, then no shadows. Add `?quality=high` or `?quality=low` to the address to fix the level.
 
 ## The Inquisition (game review)
 
@@ -122,7 +147,12 @@ Not covered:
 | --- | --- |
 | `src/engine.js` | Rules and notation (SAN, FEN, UCI, PGN), with no graphics or network code |
 | `src/pieces.js` | Gothic piece models |
-| `src/scene.js` | Board, lighting, cathedral setting, highlights, best-move arrow |
+| `src/scene.js` | Lighting, camera, board squares, candle stands, highlights, best-move arrow |
+| `src/cathedral.js`, `src/frame.js`, `src/textures.js` | The building, the stone board surround, procedural textures |
+| `src/boardView.js` | The pieces on screen: moves, take-backs, the graveyard |
+| `src/effects/` | Flames, fracture, dissolve and shatter effects, animation timeline, knight arrow outline |
+| `src/audio.js`, `src/music.js` | Synthesised sound effects and reverb; background music |
+| `src/quality.js` | Frame-time check that lowers detail on slow machines |
 | `src/main.js` | Input, animation, side panel |
 | `src/reviewMode.js` | Review mode: stepping, ratings, eval bar, commentary |
 | `src/importDialog.js` | Import by username |
@@ -131,4 +161,4 @@ Not covered:
 | `src/analysis/grounding.js` | Facts given to the AI model, and checks on its replies |
 | `api/` | Server endpoints (Vercel functions, also mounted by the Vite dev and preview servers) |
 | `server/http.js` | Helpers shared by the endpoints |
-| `test/` | Rules, notation, analysis and endpoint tests; `fixtures/` holds a real public game from the Published-Data API |
+| `test/` | Rules, notation, analysis, endpoint, effect and audio tests; `fixtures/` holds a real public game from the Published-Data API |
