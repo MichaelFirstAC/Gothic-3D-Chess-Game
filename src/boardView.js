@@ -154,11 +154,61 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
     return { settled };
   }
 
+  // The reverse of a move. history is what remains after taking it back.
+  async function animateUndo(entry, history) {
+    const start = version;
+    // Anything still settling from the move is finished first.
+    timeline.cancelAll();
+    const { move } = entry;
+    const mover = meshes.get(move.to);
+    if (!mover) return;
+    meshes.delete(move.to);
+    sound('undo');
+    const jobs = [];
+
+    if (move.captured) {
+      const keys = new Set(graveyardSlots(history).map((s) => s.key));
+      const leaving = graveyard.children.find((mesh) => !keys.has(mesh.userData.key));
+      if (leaving) {
+        graveyard.remove(leaving);
+        jobs.push(shatter.dissolveOut(leaving));
+      }
+    }
+    refreshGraveyard(history);
+
+    if (move.promotion) {
+      pieces.remove(mover);
+      jobs.push((async () => {
+        await shatter.crumble(mover);
+        if (start !== version) return;
+        await shatter.reform(place(move.piece, move.from), { duration: 0.55 });
+      })());
+    } else {
+      meshes.set(move.from, mover);
+      jobs.push(slide(mover, move.from, hopFor(move.piece), slideSeconds(move.to, move.from)));
+    }
+
+    if (isCastle(move)) {
+      const rook = rookShift(move);
+      const mesh = meshes.get(rook.to);
+      meshes.delete(rook.to);
+      meshes.set(rook.from, mesh);
+      jobs.push(slide(mesh, rook.from, 1.5, slideSeconds(rook.to, rook.from) + 0.12));
+    }
+    if (move.captured) {
+      const square = victimSquare(move);
+      // The returning piece appears once the mover has cleared the square.
+      jobs.push(shatter.reform(place(move.captured, square), { delay: reducedMotion() ? 0.1 : 0.28 }));
+    }
+    await Promise.all(jobs);
+  }
+
   return {
     pieces,
     sync,
     refreshGraveyard,
     animateMove,
+    animateUndo,
     update: (seconds) => timeline.advance(seconds),
     timeline,
     get version() { return version; },

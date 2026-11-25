@@ -244,6 +244,7 @@ async function announceResult() {
 const review = createReviewMode({
   sync: syncPieces,
   animate: (move, history) => boardView.animateMove(move, history),
+  unanimate: (entry, history) => boardView.animateUndo(entry, history),
   mark: (marks) => highlights.show(marks),
   arrow: (move) => bestArrow.show(move),
   moveList: renderMoveList,
@@ -417,10 +418,21 @@ $('new-game').addEventListener('click', async () => {
   newGame();
 });
 
-$('undo').addEventListener('click', () => {
-  game.undo();
-  selected = -1;
+// Take-back plays the move in reverse. Clicks made while it runs are ignored.
+$('undo').addEventListener('click', async () => {
+  if (busy || review.active) return;
+  const taken = game.undo();
+  selected = hovered = -1;
+  if (!taken) {
+    render();
+    return;
+  }
+  busy = true;
+  render();
+  await boardView.animateUndo(taken, game.history);
+  // A safety net: whatever the animation did, the board ends up exact.
   syncPieces();
+  busy = false;
   render();
   if ($('auto-turn').checked) turnCamera(game.state.turn);
 });

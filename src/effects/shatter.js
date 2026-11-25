@@ -364,5 +364,70 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
       });
     },
 
+    // A piece leaves its place in a haze of embers. Used by take-back.
+    dissolveOut(piece, { duration = 0.45 } = {}) {
+      effectsGroup.add(piece);
+      return play(reduced() ? 0.2 : duration, (keep) => {
+        const length = reduced() ? 0.2 : duration;
+        if (reduced()) {
+          const out = fade(piece, keep, 1, 0);
+          return { update: (t) => out(t / length), done: () => effectsGroup.remove(piece) };
+        }
+        const dissolve = borrow(piece, keep);
+        return {
+          update(t) { dissolve.amount = easeInOut(t / length); },
+          done() { effectsGroup.remove(piece); },
+        };
+      });
+    },
+
+    // A piece already in its final place gathers itself together.
+    reform(piece, { delay = 0, duration = 0.65 } = {}) {
+      const length = reduced() ? 0.25 : duration;
+      return play(delay + length, (keep) => {
+        piece.visible = false;
+        let step = null;
+        return {
+          update(t) {
+            if (t < delay) return;
+            if (!step) {
+              if (reduced()) {
+                step = fade(piece, keep, 0, 1);
+                piece.visible = true;
+              } else {
+                step = gather(piece, keep);
+                sound('reform');
+              }
+            }
+            step(phase(t, delay, delay + length));
+          },
+          done() { piece.visible = true; },
+        };
+      });
+    },
+
+    // A piece breaks up and sinks where it stands. Used to undo a promotion.
+    crumble(piece) {
+      if (reduced()) return this.dissolveOut(piece);
+      effectsGroup.add(piece);
+      return play(0.55, (keep) => {
+        const debris = dissolveFor(piece, keep);
+        const centre = piece.position.clone();
+        const bodies = loosen(chunkMeshes(piece, debris, keep), centre, 0, 0.55);
+        piece.visible = false;
+        sound('crack');
+        return {
+          update(t, dt) {
+            if (t < 0.3) tumble(bodies, dt);
+            else {
+              debris.clipY = -0.001;
+              for (const body of bodies) body.position.y -= dt * 1.1;
+              debris.amount = phase(t, 0.3, 0.55);
+            }
+          },
+          done() { effectsGroup.remove(piece); },
+        };
+      });
+    },
   };
 }

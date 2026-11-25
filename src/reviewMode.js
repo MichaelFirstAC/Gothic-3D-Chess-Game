@@ -30,8 +30,9 @@ function element(tag, className, text) {
   return node;
 }
 
-// view: { sync(state, history), animate(move, history) => Promise, mark(marks),
-//         arrow(move | null), moveList(history, decorate), exit() }
+// view: { sync(state, history), animate(move, history) => Promise,
+//         unanimate(entry, history) => Promise, mark(marks), arrow(move | null),
+//         moveList(history, decorate), exit() }
 export function createReviewMode(view) {
   const cache = new Map(); // finished reviews, so reopening a game is instant
   let session = null;
@@ -56,7 +57,8 @@ export function createReviewMode(view) {
     view.arrow(review?.moves[Math.max(0, cursor - 1)]?.best ?? null);
   }
 
-  // Walks the pieces to the cursor: one step forward is animated, jumps are not.
+  // Walks the pieces to the cursor: a single step either way is animated, and
+  // longer jumps go straight there.
   async function drive() {
     const own = session;
     if (own.moving) return;
@@ -67,6 +69,12 @@ export function createReviewMode(view) {
         const ply = own.shown;
         own.shown = ply + 1;
         await view.animate(history[ply].move, history.slice(0, ply + 1));
+      } else if (own.cursor === own.shown - 1) {
+        const ply = own.shown - 1;
+        own.shown = ply;
+        await view.unanimate(history[ply], history.slice(0, ply));
+        // A safety net, unless review has been left in the meantime.
+        if (session === own) view.sync(stateAt(ply), history.slice(0, ply));
       } else {
         own.shown = own.cursor;
         view.sync(stateAt(own.shown), history.slice(0, own.shown));
