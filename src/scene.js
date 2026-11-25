@@ -7,11 +7,12 @@ import { canvasTexture, marble } from './textures.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCathedral } from './cathedral.js';
 import { createFlame } from './effects/flame.js';
+import { addFrame } from './frame.js';
 import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
 
-function addBoard(scene) {
+function addBoard(scene, environment) {
   const textures = {
     light: marble('#a99d8a', '#4f4338', 7),
     dark: marble('#2b151b', '#9b6a63', 91),
@@ -34,35 +35,18 @@ function addBoard(scene) {
     scene.add(tile);
   }
 
-  const stone = new THREE.MeshStandardMaterial({ color: 0x1d1a20, roughness: 0.62, metalness: 0.25 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0x8d7038, roughness: 0.38, metalness: 0.95 });
-  const slab = (size, height, y, material) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, height, size), material);
-    mesh.position.y = y;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
-  };
-  // Frame rails sit around the squares; the plinth steps sit below them.
-  for (let side = 0; side < 4; side++) {
-    const rail = new THREE.Group();
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.24, 0.45), stone);
-    beam.position.set(0.225, -0.09, 4.225);
-    beam.receiveShadow = true;
-    const inlay = new THREE.Mesh(new THREE.BoxGeometry(8.1, 0.025, 0.035), gold);
-    inlay.position.set(0, 0.035, 4.035);
-    rail.add(beam, inlay);
-    rail.rotation.y = side * Math.PI / 2;
-    scene.add(rail);
-  }
-  slab(9.15, 0.16, -0.29, gold);
-  slab(9.5, 0.4, -0.55, stone);
+  addFrame(scene, environment);
 
   const label = (text) => {
     const map = canvasTexture(128, (ctx) => {
-      ctx.fillStyle = '#c9ad6a';
-      ctx.font = '600 86px "EB Garamond", Georgia, serif';
+      ctx.font = '600 88px "EB Garamond", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 9;
+      ctx.strokeStyle = 'rgba(8,6,10,0.85)';
+      ctx.strokeText(text, 64, 68);
+      ctx.fillStyle = '#e3d6b6';
       ctx.fillText(text, 64, 68);
     });
     return new THREE.Mesh(
@@ -74,9 +58,9 @@ function addBoard(scene) {
   for (let i = 0; i < 8; i++) {
     for (const side of [1, -1]) {
       const file = label('abcdefgh'[i]);
-      file.position.set(i - 3.5, 0.034, side * 4.25);
+      file.position.set(i - 3.5, 0.038, side * 4.265);
       const rank = label(String(i + 1));
-      rank.position.set(-side * 4.25, 0.034, 3.5 - i);
+      rank.position.set(-side * 4.265, 0.038, 3.5 - i);
       labels.push(file, rank);
     }
   }
@@ -204,7 +188,7 @@ export function createScene(container) {
   lamp.position.set(0, 17, 0);
   scene.add(lamp, lamp.target);
 
-  const orientLabels = addBoard(scene);
+  const orientLabels = addBoard(scene, scene.environment);
   const flickerCandles = addCandleTowers(scene);
   const cathedral = addCathedral(scene);
 

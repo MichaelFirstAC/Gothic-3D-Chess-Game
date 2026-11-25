@@ -301,6 +301,33 @@ export function roseGlass() {
   });
 }
 
+// Pale, pitted limestone.
+export function limestone(seed, size = 512) {
+  const random = seededRandom(seed);
+  return canvasTexture(size, (ctx) => {
+    ctx.fillStyle = '#8f8576';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 380; i++) {
+      const x = random() * size;
+      const y = random() * size;
+      const r = 8 + random() * 55;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const tone = random();
+      g.addColorStop(0, tone < 0.4 ? 'rgba(50,42,32,0.2)' : tone < 0.75 ? 'rgba(215,202,174,0.17)' : 'rgba(120,100,70,0.18)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 5200; i++) {
+      ctx.fillStyle = random() < 0.65
+        ? `rgba(35,28,20,${0.2 + random() * 0.4})` : `rgba(232,222,200,${0.15 + random() * 0.25})`;
+      ctx.beginPath();
+      ctx.arc(random() * size, random() * size, 0.4 + random() ** 3 * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
 // White with soft edges; `fade` makes it thin out toward the bottom.
 export function shaftTexture() {
   return paintedTexture(128, 256, (ctx, width, height) => {
