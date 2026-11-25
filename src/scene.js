@@ -7,6 +7,7 @@ import { canvasTexture, marble } from './textures.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCathedral } from './cathedral.js';
 import { createFlame } from './effects/flame.js';
+import { candelabrumGeometry, ironMaterial, SOCKETS } from './candelabrum.js';
 import { addFrame } from './frame.js';
 import { createQualityGovernor } from './quality.js';
 
@@ -74,28 +75,21 @@ function addBoard(scene, environment) {
   };
 }
 
-// Four stone stands, each carrying three candles. A stand's stone and wax are
-// merged into one mesh apiece.
-function addCandleTowers(scene) {
-  const stone = new THREE.MeshLambertMaterial({ color: 0x3a342f, flatShading: true, reflectivity: 0 });
+// Four iron candelabra, each carrying three candles.
+function addCandleTowers(scene, environment) {
+  const iron = ironMaterial(environment);
   const wax = new THREE.MeshLambertMaterial({ color: 0xcfc3a4, emissive: 0x2a1c08, reflectivity: 0 });
   const wick = new THREE.MeshBasicMaterial({ color: 0x140d08 });
-  const at = (geometry, y, x = 0, z = 0) => geometry.translate(x, y, z);
-  const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
+  const heights = [0.55, 0.36, 0.43];
+  const column = (radius, bottom, height, i, lift = 0) => {
+    const { x, y, z } = SOCKETS[i];
+    return new THREE.CylinderGeometry(radius, bottom, height, 16).translate(x, y + lift + height / 2, z);
+  };
 
-  const stand = [
-    at(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), -0.65),
-    at(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), 0.25),
-    at(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), 1.1),
-  ];
-  for (let i = 0; i < 4; i++) {
-    const a = Math.PI / 4 + i * Math.PI / 2;
-    stand.push(at(new THREE.ConeGeometry(0.07, 0.55, 4), 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32));
-  }
   const parts = [
-    [mergeGeometries(stand), stone],
-    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.055, 0.065, h, 10), 1.2 + h / 2, x, z))), wax],
-    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.006, 0.008, 0.045, 5), 1.22 + h, x, z))), wick],
+    [candelabrumGeometry(), iron],
+    [mergeGeometries(heights.map((h, i) => column(0.052, 0.058, h, i))), wax],
+    [mergeGeometries(heights.map((h, i) => column(0.005, 0.007, 0.045, i, h))), wick],
   ];
 
   const towers = [];
@@ -103,14 +97,17 @@ function addCandleTowers(scene) {
   for (const x of [-5.7, 5.7]) {
     for (const z of [-5.7, 5.7]) {
       const tower = new THREE.Group();
+      // The arms lie across the line to the board, so both side candles show.
+      tower.rotation.y = Math.atan2(x, z);
       for (const [geometry, material] of parts) {
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = material === stone;
+        mesh.castShadow = material === iron;
+        mesh.receiveShadow = material === iron;
         tower.add(mesh);
       }
-      const flames = candles.map(([cx, cz, h]) => {
+      const flames = heights.map((h, i) => {
         const flame = createFlame(seed++);
-        flame.object.position.set(cx, 1.245 + h, cz);
+        flame.object.position.set(SOCKETS[i].x, SOCKETS[i].y + h + 0.045, SOCKETS[i].z);
         tower.add(flame.object);
         return flame;
       });
@@ -189,7 +186,7 @@ export function createScene(container) {
   scene.add(lamp, lamp.target);
 
   const orientLabels = addBoard(scene, scene.environment);
-  const flickerCandles = addCandleTowers(scene);
+  const flickerCandles = addCandleTowers(scene, scene.environment);
   const cathedral = addCathedral(scene);
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
