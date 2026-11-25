@@ -5,6 +5,8 @@ import { createStockfish, DEFAULT_DEPTH } from './analysis/stockfish.js';
 import { createStockfishWorker } from './analysis/stockfishWorker.js';
 import { reviewGame } from './analysis/review.js';
 import { formatScore, scoreCp, winPercent } from './analysis/score.js';
+import { buildCommentaryRequest } from './analysis/moments.js';
+import { fetchCommentary } from './analysis/commentary.js';
 
 const NAMES = { w: 'White', b: 'Black' };
 const MARKS = { best: '★', good: '', inaccuracy: '?!', mistake: '?', blunder: '??' };
@@ -105,6 +107,7 @@ export function createReviewMode(view) {
         button.title = LABELS[rated.classification];
         if (MARKS[rated.classification]) button.append(element('span', 'mark', MARKS[rated.classification]));
       }
+      if (session.commentary?.keyPlies.has(index + 1)) button.classList.add('key');
       if (index === session.cursor - 1) {
         button.classList.add('current');
         button.setAttribute('aria-current', 'step');
@@ -155,6 +158,59 @@ export function createReviewMode(view) {
     $('verdict').replaceChildren(...lines);
   }
 
+  // Claude's explanation of a key moment, and the summary at the end.
+  function renderCommentary() {
+    const { cursor, commentary } = session;
+    const isKey = Boolean(commentary?.keyPlies.has(cursor));
+    const text = commentary?.result?.moments.get(cursor);
+    $('explanation').textContent = text
+      || (isKey && commentary.status === 'loading' ? 'The scribe is writing about this move…' : '');
+
+    const summary = cursor === total() ? commentary?.result?.summary : null;
+    $('summary').hidden = !summary?.length;
+    $('summary-list').replaceChildren(...(summary || []).map((line) => element('li', '', line)));
+
+    let note = '';
+    if (commentary?.status === 'unavailable') {
+      note = `No written commentary. ${commentary.message} The engine review is complete.`;
+    } else if (commentary?.status === 'quiet') note = 'No key moments to explain.';
+    else if (commentary?.status === 'loading') note = 'Writing commentary on the key moments…';
+    else if (commentary?.status === 'ready') {
+      note = 'Dotted underlines mark moves with commentary, written by Claude from the engine\'s findings.';
+    }
+    $('commentary-note').textContent = note;
+  }
+
+  // Asks for commentary once the engine has judged the game. A finished answer
+  // is kept with the cached review; failures are retried on the next visit.
+  async function narrate(own) {
+    const { review } = own;
+    if (review.commentary) {
+      own.commentary = review.commentary;
+      renderPanel();
+      return;
+    }
+    const request = buildCommentaryRequest(review, own.record.side ?? null);
+    const keyPlies = new Set(request.moments.map((m) => m.ply));
+    if (!keyPlies.size) {
+      own.commentary = { status: 'quiet', keyPlies };
+      renderPanel();
+      return;
+    }
+    own.commentary = { status: 'loading', keyPlies };
+    renderPanel();
+    try {
+      const result = await fetchCommentary(request, { signal: own.controller.signal });
+      review.commentary = { status: 'ready', keyPlies, result };
+      own.commentary = review.commentary;
+    } catch (error) {
+      if (own.controller.signal.aborted) return;
+      if (error.name !== 'CommentaryUnavailable') console.error(error);
+      own.commentary = { status: 'unavailable', keyPlies: new Set(), message: error.message };
+    }
+    if (session === own) renderPanel();
+  }
+
   function renderPanel() {
     if (!session) return;
     const { cursor, record, progress, error } = session;
@@ -171,6 +227,7 @@ export function createReviewMode(view) {
     renderAccuracy();
     renderMoves();
     renderVerdict();
+    renderCommentary();
     renderEval();
     $('step-first').disabled = $('step-back').disabled = cursor === 0;
     $('step-next').disabled = $('step-last').disabled = cursor === total();
@@ -207,7 +264,8 @@ export function createReviewMode(view) {
     }
   }
 
-  // record: { history, finalState, result, title, resultText?, players? }
+  // record: { history, finalState, result, title, resultText?, players?, side? }
+  // `side` is the player being coached ('w' or 'b'); omit it to review both.
   async function open(record) {
     if (session || !record.history.length) return;
     const own = {
@@ -216,6 +274,7 @@ export function createReviewMode(view) {
       shown: record.history.length,
       moving: false,
       review: null,
+      commentary: null,
       progress: '',
       error: '',
       controller: new AbortController(),
@@ -235,6 +294,7 @@ export function createReviewMode(view) {
       own.progress = '';
       renderBoard();
       renderPanel();
+      await narrate(own);
     } catch (error) {
       if (session !== own || error.name === 'AbortError') return;
       console.error(error);
@@ -249,7 +309,8 @@ export function createReviewMode(view) {
     session.controller.abort();
     session = null;
     document.body.classList.remove('reviewing');
-    for (const id of ['accuracy', 'verdict']) $(id).replaceChildren();
+    for (const id of ['accuracy', 'verdict', 'explanation', 'summary-list', 'commentary-note']) $(id).replaceChildren();
+    $('summary').hidden = true;
     $('progress').hidden = true;
     $('eval-bar').hidden = true;
     view.arrow(null);

@@ -168,6 +168,13 @@ body.reviewing #insight { max-height: 38%; flex-shrink: 0; overflow-y: auto; }
 #insight p { margin: 0 0 4px; }
 .verdict-title { font: 600 19px 'EB Garamond', Georgia, serif; }
 .verdict-detail { color: var(--dim); }
+#insight p:empty { display: none; }
+#explanation { padding-left: 10px; border-left: 2px solid #6b5530; }
+#summary { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+#summary ul { margin: 0; padding-left: 18px; }
+#commentary-note { color: var(--dim); font-size: 14px; }
+/* Moves that have (or are waiting for) written commentary. */
+#moves button.key { text-decoration: underline dotted var(--gold); text-underline-offset: 4px; }
 
 body.reviewing .review-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .review-controls #review-flip, .review-controls #exit-review { grid-column: span 2; }
