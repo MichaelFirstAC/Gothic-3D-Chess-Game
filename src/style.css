@@ -126,7 +126,7 @@ dialog h2 { color: var(--gold); font-size: 18px; letter-spacing: 0.1em; }
 /* ---------------------------------------------------------------- review */
 
 [hidden] { display: none !important; }
-#review { grid-column: 1 / -1; border-color: #6b5530; color: var(--gold); letter-spacing: 0.12em; }
+#review { border-color: #6b5530; color: var(--gold); letter-spacing: 0.12em; }
 
 .review-only { display: none; }
 body.reviewing .review-only { display: block; }
@@ -209,6 +209,27 @@ body.reviewing .review-controls { display: grid; grid-template-columns: repeat(4
   font: 600 13px 'Cinzel', serif;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------- import */
+
+.import-form { display: flex; gap: 8px; }
+.import-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: rgb(0 0 0 / 0.4);
+  color: var(--ink);
+  font: 17px 'EB Garamond', Georgia, serif;
+}
+.import-form input:focus { border-color: var(--gold); outline: none; }
+.import-status { margin: 10px 0 0; color: var(--dim); }
+.import-status:empty { display: none; }
+.import-games { max-height: 40vh; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.import-games li + li { margin-top: 6px; }
+.import-games button { width: 100%; text-align: left; font: 16px 'EB Garamond', Georgia, serif; }
+.import-games span, .import-games small { display: block; padding: 0 4px; }
+.import-games small { color: var(--dim); font-size: 13px; }
 
 @media (max-width: 760px) {
   body.reviewing #insight { max-height: 220px; }

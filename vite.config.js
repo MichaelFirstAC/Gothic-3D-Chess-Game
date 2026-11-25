@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 
 // Server-only settings. None has the VITE_ prefix, so none reaches the browser.
 const SERVER_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'CHESSCOM_CONTACT'];
-const ROUTES = { '/api/explain': './api/explain.js' };
+const ROUTES = { '/api/explain': './api/explain.js', '/api/chesscom': './api/chesscom.js' };
 
 // Serves the Vercel functions during `npm run dev` and `npm run preview`.
 function apiRoutes() {

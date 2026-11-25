@@ -5,6 +5,7 @@ import { Game, inCheck, colorOf, squareName } from './engine.js';
 import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
 import { createReviewMode } from './reviewMode.js';
+import { openImportDialog } from './importDialog.js';
 
 const NAMES = { w: 'White', b: 'Black' };
 const GLYPHS = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
@@ -199,6 +200,7 @@ function ask(title, text, choices) {
   if (dialog.open) return Promise.resolve(null);
   $('dialog-title').textContent = title;
   $('dialog-text').textContent = text;
+  $('dialog-body').replaceChildren();
   return new Promise((resolve) => {
     let answer = null;
     $('dialog-actions').replaceChildren(...choices.map(({ label, value, glyph }) => {
@@ -301,6 +303,7 @@ function renderPanel() {
   $('resign').disabled = busy || over;
   $('new-game').disabled = busy;
   $('review').disabled = busy || !game.history.length;
+  $('import').disabled = busy;
 }
 
 function render() {
@@ -336,8 +339,24 @@ const review = createReviewMode({
   exit() {
     syncPieces();
     render();
+    if (sideBeforeImport) turnCamera(sideBeforeImport);
+    sideBeforeImport = null;
   },
 });
+
+let sideBeforeImport = null;
+
+// Reviews a game fetched by username, seen from that player's side of the board.
+async function importGame() {
+  if (busy || review.active) return;
+  const record = await openImportDialog();
+  if (!record || busy || review.active) return;
+  selected = hovered = -1;
+  canvas.classList.remove('pointing');
+  sideBeforeImport = viewSide;
+  review.open(record);
+  if (record.side) turnCamera(record.side);
+}
 
 function reviewCurrentGame() {
   if (busy || review.active) return;
@@ -540,6 +559,7 @@ const flipBoard = () => {
 $('flip').addEventListener('click', flipBoard);
 $('review-flip').addEventListener('click', flipBoard);
 $('review').addEventListener('click', reviewCurrentGame);
+$('import').addEventListener('click', importGame);
 
 $('auto-turn').addEventListener('change', (event) => {
   if (event.target.checked && controls.enabled) turnCamera(game.state.turn);
