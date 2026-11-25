@@ -35,21 +35,23 @@ A variable already set in your system environment takes priority over `.env`. `.
 ## Controls
 
 - Click a piece, then a highlighted square. Green dots are moves, red rings are captures.
-- Drag to rotate, scroll to zoom, right-drag to pan.
+- Drag to rotate, scroll to zoom, right-drag to pan. You can tilt low enough to look over the rim into the drop; panning stops a short way from the board, so the camera never goes under the rock or leaves the building.
 - Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored while a dialog is open or you are typing.
 - **Flip board** swaps sides; **Turn board after each move** does it automatically.
 
 ## The setting
 
-- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. Hold S, or drag downward, for a low angle that looks up the nave. At low angles the view shifts upward, so the height shows while the verticals stay upright.
+- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. It has no floor: the piers and walls run on down into a chasm and fade into black, with drifting dust and a faint cold haze. Hold S, or drag downward, for a low angle that looks up the nave.
+- **The stonework** does not visibly repeat. Two differently laid walls with uneven courses are mapped by position, shifted on every pier and bay, blended together and weathered with soot and damp on a much larger scale than any block.
+- **The rock pillar** is all that holds up the board: one craggy spire with a dais carved from its top, a broken rim, four spurs for the candle stands and two ledges for captured pieces. It is a single mesh with a single material.
 - **Candles** have shader-drawn flames. Each stand's light flickers with the same noise as its flames.
-- **The board** keeps its marble squares, set in a carved stone frame on a chipped limestone plinth.
+- **The board** keeps its marble squares, set in a carved stone frame seated on the dais.
 
 ## Animations
 
-- **Capture:** the piece is crushed, shatters, sinks into the board, and gathers itself again beside the board.
+- **Capture:** the piece is crushed, shatters, sinks into the board, and gathers itself again on the rock ledge on the captor's side.
 - **Promotion:** the pawn cracks and sinks, then the new piece is built from fragments rising out of the square.
-- **Take back:** the move plays in reverse, including the rook when castling, and captured pieces return from beside the board. In review, stepping back one move does the same; longer jumps are instant. Extra clicks while it runs are ignored.
+- **Take back:** the move plays in reverse, including the rook when castling, and captured pieces return from the ledges. In review, stepping back one move does the same; longer jumps are instant. Extra clicks while it runs are ignored.
 - **Best-move arrow:** knight moves are drawn as an L, long leg first.
 
 If your system asks for **reduced motion**, shattering, promotion and take-back become short fades and quick slides without hops.
@@ -150,6 +152,10 @@ Not covered:
 | `src/pieces.js` | Gothic piece models |
 | `src/scene.js` | Lighting, camera, board squares, candle stands, highlights, best-move arrow |
 | `src/cathedral.js`, `src/frame.js`, `src/textures.js` | The building, the stone board surround, procedural textures |
+| `src/stoneMaterial.js`, `src/stoneLayout.js` | The stone shader and how its walls are coursed |
+| `src/pillar.js`, `src/pillarShape.js` | The rock pillar, its outline and where captured pieces stand |
+| `src/abyssFog.js`, `src/abyssAir.js` | The darkness below the board, dust and haze |
+| `src/candelabrum.js`, `src/candles.js` | The wrought-iron stands and their used candles |
 | `src/boardView.js` | The pieces on screen: moves, take-backs, the graveyard |
 | `src/effects/` | Flames, fracture, dissolve and shatter effects, animation timeline, knight arrow outline |
 | `src/audio.js`, `src/music.js` | Synthesised sound effects and reverb; background music |
