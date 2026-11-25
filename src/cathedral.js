@@ -1,13 +1,19 @@
-// A High Gothic interior after Cologne Cathedral, with the board at the
+// A High Gothic cathedral after Cologne, in ruins, with the board at the
 // crossing: clustered piers, pointed arcades, triforium, tall clerestory and
-// ribbed vaults. It has no floor. Piers and walls carry on down into a chasm
-// and are lost in the dark. Repeated parts are built once and instanced.
+// ribbed vaults, much of it fallen (ruinPlan.js says what) and open to the sky.
+// It has no floor. Piers and walls carry on down into a chasm and are lost in
+// the dark. Whole parts are built once and instanced; broken ones are merged.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { lancetGlass, roseGlass, shaftTexture } from './textures.js';
-import { stoneMaterial } from './stoneMaterial.js';
-import { createFallingStone } from './fallingStone.js';
+import { brokenRose } from './brokenRose.js';
+import { brokenLancet, brokenGlassMaterial } from './brokenGlass.js';
+import { WINDOW, holeEdge } from './roseShape.js';
+import { stoneMaterial, stoneTime } from './stoneMaterial.js';
+import { createLamps } from './lamps.js';
 import { withAbyss } from './abyssFog.js';
+import { createSkyDome } from './skyDome.js';
+import { jaggedLine, heightAt, clipBelow, capBreak, brokenShaft, rubbleAlong } from './ruin.js';
+import { bayState, pierState, keyOf, WHOLE_VAULTS } from './ruinPlan.js';
 
 // The level heights are measured from. There is no floor there.
 const BASE_Y = -0.8;
@@ -200,6 +206,128 @@ function vaultGeometry(width, length, thickness = 0.24) {
   return stoneGeometry(parts);
 }
 
+// ---------------------------------------------------------------- ruins
+
+// Where there was stone in a bay: above the arch, below the top of the wall
+// and outside its windows.
+function bayIsStone() {
+  const arch = archPoints(0, ARCADE_SPRING, BAY, ARCADE_APEX - ARCADE_SPRING, 24).map((p) => [p.x, p.y]);
+  const holes = [
+    lancetOutline(0, CLERESTORY, 6, WINDOW_HEIGHT),
+    ...[-2.55, -0.85, 0.85, 2.55].map((x) => lancetOutline(x, TRIFORIUM + 0.2, 1.3, 3)),
+  ];
+  const within = (ring, x, y) => ring.reduce((inside, a, i) => {
+    const b = ring[(i + 1) % ring.length];
+    const crosses = (a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x;
+    return crosses ? !inside : inside;
+  }, false);
+  return (x, y) => y < WALL_TOP - 0.05 && y > heightAt(arch, x) && !holes.some((ring) => within(ring, x, y));
+}
+
+// What is left of a bay: broken off along a ragged line, or nothing but the
+// springing of its arch beside each pillar.
+function ruinedBay(whole, isStone, state, seed) {
+  const half = BAY / 2;
+  const line = state === 'gone'
+    ? [[-half, 14.6], [-3.9, 13.1], [-3.84, 12], [-2.9, 11.6], [-2.5, 8], [2.7, 8], [3.1, 11.2], [3.8, 11.5], [3.86, 13.4], [half, 13]]
+    : jaggedLine(seed, -half, half, state, 3);
+  return [
+    clipBelow(whole, line),
+    capBreak(line, 0.9, isStone, seed),
+    ...(state === 'gone' ? [] : rubbleAlong(line, 9, seed)),
+  ];
+}
+
+// A snapped pillar: every shaft has broken at its own height.
+function ruinedPier(level, seed) {
+  const height = (k) => level + (((seed * 37 + k * 53) % 17) / 17) * 5 - 2.4;
+  const parts = brokenShaft(0.9, DEEP, level - 1.6, 8, 0, 0, seed);
+  const tops = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const major = i % 2 === 0;
+    const radius = major ? 0.3 : 0.17;
+    const x = Math.sin(angle) * 1.05;
+    const z = Math.cos(angle) * 1.05;
+    const top = height(i);
+    tops.push(top);
+    parts.push(...brokenShaft(radius, DEEP, top, major ? 8 : 6, x, z, seed * 11 + i));
+    if (top > ARCADE_SPRING + 0.8) {
+      parts.push(cylinder(radius * 1.75, radius, ARCADE_SPRING - 0.55, ARCADE_SPRING, 6, x, z));
+      parts.push(cylinder(radius * 1.85, radius * 1.85, ARCADE_SPRING, ARCADE_SPRING + 0.14, 6, x, z));
+    }
+  }
+  for (const y of [-19, -9, -0.2, TRIFORIUM - 0.3]) {
+    if (y < Math.min(...tops) - 0.6) parts.push(cylinder(1.38, 1.38, y, y + 0.16, 16));
+  }
+  parts.push(...rubbleAlong([[-1, level - 1.5], [1, level - 1.5]], 5, seed, 1.6));
+  return parts;
+}
+
+// Fallen vaults: only the ribs springing from either side are left, reaching
+// out into the sky and broken off.
+function ruinedVault(whole, width, seed) {
+  const w = width / 2;
+  const line = [
+    [-w - 1, 41], [-w * 0.78, 36.6], [-w * 0.77, 34.4], [-w * 0.52, 33.8], [-w * 0.46, 29],
+    [w * 0.5, 29], [w * 0.62, 32.4], [w * 0.63, 34.2], [w * 0.86, 35], [w + 1, 40],
+  ].map(([x, y], i) => [x, y + (((seed * 29 + i * 13) % 9) / 9 - 0.5) * 1.4]);
+  return clipBelow(whole, line);
+}
+
+// An outer wall in the x-y plane, one unit thick, whose ragged top follows
+// `tops`: [[along the wall, height], ...].
+function raggedWall(tops, seed, hole) {
+  const edge = [];
+  for (let i = 1; i < tops.length; i++) {
+    const [x0, y0] = tops[i - 1];
+    const [x1, y1] = tops[i];
+    const piece = jaggedLine(seed * 31 + i, x0, x1, 0, 1.5);
+    for (const [x, jag] of piece) edge.push(new THREE.Vector2(x, y0 + ((y1 - y0) * (x - x0)) / (x1 - x0) + jag * 0.8));
+  }
+  const from = tops[0][0];
+  const to = tops[tops.length - 1][0];
+  const shape = new THREE.Shape([new THREE.Vector2(from, DEEP), new THREE.Vector2(to, DEEP), ...edge.reverse()]);
+  if (hole) shape.holes.push(new THREE.Path(hole));
+  return new THREE.ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
+}
+
+// The walls closing the four arms, and the outer walls of the nave aisles.
+// Heights are measured from the base level.
+function outerWalls() {
+  const half = HALF + 9;
+  // The east wall, with the broken window as a hole right through it.
+  const opening = holeEdge().map(({ angle, radius }) => new THREE.Vector2(
+    WINDOW.x + Math.cos(angle) * radius, WINDOW.y - BASE_Y + Math.sin(angle) * radius,
+  ));
+  const east = raggedWall(
+    [[-half, 21], [-19, 27], [-15, 17], [-12, 36], [-6, 41], [-1, 36.5], [5, 43], [11, 35.5], [14, 38], [17, 22], [21, 30], [half, 18]],
+    3, opening,
+  ).translate(0, 0, WINDOW.z + 0.5);
+  const west = raggedWall(
+    [[-half, 15], [-17, 27], [-13, 31], [-5, 30.5], [-2, 24], [1, 31], [12, 31], [15, 19], [half, 23]], 5,
+  ).translate(0, 0, NAVE_END + 0.1);
+  const walls = [east, west];
+  for (const s of [-1, 1]) {
+    // The ends of the transepts keep their tall windows, but little above them.
+    walls.push(raggedWall([[-HALF, 17], [-12, 30], [-4, 31], [0, s > 0 ? 29.5 : 36], [5, 31.5], [12, 30], [HALF, 14]], 7 + s)
+      .rotateY(Math.PI / 2).translate(s * (TRANSEPT_END + 0.1), 0, 0));
+    // Each aisle wall is low, and breached beside every bay that has gone.
+    for (const end of [-1, 1]) {
+      const tops = [[0, ARCADE_APEX + 1]];
+      for (let i = 0; i < NAVE_BAYS; i++) {
+        const breached = bayState({ x: s * HALF, z: end * bayCentre(i) }) === 'gone';
+        if (breached) tops.push([i * BAY + 0.6, 9], [i * BAY + 2.4, -6], [i * BAY + 6.8, -3], [i * BAY + 8.4, 11]);
+        else tops.push([i * BAY + 4.5, 14.5]);
+      }
+      tops.push([BAY * NAVE_BAYS, 15]);
+      walls.push(raggedWall(tops, 11 + s * 3 + end)
+        .rotateY(-end * Math.PI / 2).translate(s * (HALF + 9), 0, end * HALF));
+    }
+  }
+  return walls;
+}
+
 // ---------------------------------------------------------------- layout
 
 const range = (count, f) => Array.from({ length: count }, (_, i) => f(i));
@@ -260,122 +388,92 @@ function endAndAisleWindows() {
   return { tall, low };
 }
 
-// Shafts of coloured light falling from the clerestory, past the crossing and
-// down into the chasm. They stand well back, where the camera cannot reach.
-function addLightShafts(group) {
-  const beam = shaftTexture();
-  const additive = (color) => withAbyss(new THREE.MeshBasicMaterial({
-    map: beam, color, opacity: 0.15, transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, side: THREE.DoubleSide,
-  }), { density: 0.04, floor: -40 });
-  const quad = (a, b, c, d) => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute([a, b, c, a, c, d].flat(), 3));
-    // The texture is brightest at v = 1, which is the window end.
-    g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0], 2));
-    return g;
-  };
-  const tints = { warm: 0xffa648, rose: 0xd6406a, cool: 0x4f7dff, violet: 0x9a5cff };
-  const falls = [
-    ['warm', 1, 1], ['cool', -1, 1], ['rose', 1, 2], ['violet', -1, 2],
-    ['cool', 1, -1], ['warm', -1, -1], ['violet', 1, -2], ['rose', -1, -2],
-  ];
-  const END = -27;
-  const beams = {};
-  for (const [tint, side, bay] of falls) {
-    const z = Math.sign(bay) * bayCentre(Math.abs(bay));
-    const lean = Math.sign(bay) * 5;
-    const top = BASE_Y + CLERESTORY + 7;
-    const x0 = side * (HALF - 0.8);
-    const x1 = -side * 3;
-    (beams[tint] ||= []).push(
-      quad([x0, top, z - 2.4], [x0, top, z + 2.4], [x1, END, z + lean + 4], [x1, END, z + lean - 4]),
-      quad([x0, top + 2.2, z], [x0, top - 2.2, z], [x1 + side * 4, END, z + lean], [x1 - side * 4, END, z + lean]),
-    );
-  }
-  const shafts = new THREE.Group();
-  for (const [tint, color] of Object.entries(tints)) {
-    shafts.add(new THREE.Mesh(mergeGeometries(beams[tint]), additive(color)));
-  }
-  group.add(shafts);
-  return shafts;
-}
-
 export function addCathedral(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  const stone = stoneMaterial({ color: 0x504a4c });
+  const stone = stoneMaterial({ color: 0x3b363b });
   const dark = withAbyss(new THREE.MeshBasicMaterial({ color: 0x07050a }));
 
+  const crossing = { x: 0, z: 0 };
+  const standing = bayPlacements().filter((p) => bayState(p) === undefined);
   group.add(
-    instanced(pierGeometry(), stone, pierPlacements()),
-    instanced(bayGeometry(), stone, bayPlacements()),
-    instanced(vaultGeometry(HALF * 2, BAY), stone, vaultPlacements()),
-    instanced(vaultGeometry(HALF * 2, HALF * 2, 0.34), stone, [{ x: 0, z: 0 }]),
+    instanced(pierGeometry(), stone, pierPlacements().filter((p) => pierState(p) === undefined)),
+    instanced(bayGeometry(), stone, standing),
+    instanced(vaultGeometry(HALF * 2, BAY), stone, vaultPlacements().filter((p) => WHOLE_VAULTS.has(keyOf(p.x, p.z)))),
     instanced(undercroftGeometry(), stone, bayPlacements().map((p) => ({ ...p, y: UNDERCROFT }))),
   );
 
-  // Darkness behind the triforium arcade.
+  // Everything broken is gathered into one mesh, put where it stood.
+  const broken = [];
+  const stand = (parts, { x, z, turn = 0 }, y = BASE_Y) => {
+    for (const part of parts) {
+      const geometry = part.index ? part.toNonIndexed() : part.clone();
+      geometry.deleteAttribute('uv');
+      broken.push(geometry.rotateY(turn).translate(x, y, z));
+    }
+  };
+  const wholeBay = bayGeometry();
+  const isStone = bayIsStone();
+  bayPlacements().forEach((place, i) => {
+    const state = bayState(place);
+    if (state !== undefined) stand(ruinedBay(wholeBay, isStone, state, i + 3), place);
+  });
+  pierPlacements().forEach((place, i) => {
+    const level = pierState(place);
+    if (level !== undefined) stand(ruinedPier(level, i + 7), place);
+  });
+  const wholeVault = vaultGeometry(HALF * 2, BAY);
+  vaultPlacements().forEach((place, i) => {
+    if (!WHOLE_VAULTS.has(keyOf(place.x, place.z))) stand([ruinedVault(wholeVault, HALF * 2, i + 1)], place);
+  });
+  stand([ruinedVault(vaultGeometry(HALF * 2, HALF * 2, 0.34), HALF * 2, 21)], crossing);
+  stand(outerWalls(), crossing);
+  const ruins = new THREE.Mesh(mergeGeometries(broken), stone);
+  group.add(ruins);
+
+  // Darkness behind the triforium arcade, where it still stands.
   const passage = new THREE.PlaneGeometry(BAY - 1.4, 3.4).translate(0, TRIFORIUM + 1.7, 0);
-  const outward = bayPlacements().map((p) => (p.turn
+  const outward = standing.map((p) => (p.turn
     ? { ...p, x: p.x + Math.sign(p.x) * 0.75, turn: -Math.sign(p.x) * Math.PI / 2 }
     : { ...p, z: p.z + Math.sign(p.z) * 0.75, turn: p.z > 0 ? Math.PI : 0 }));
   group.add(instanced(passage, dark, outward));
 
   // Stained glass is lit from outside, so it ignores the lamps but not the fog.
-  const glass = (map, tint) => withAbyss(new THREE.MeshBasicMaterial({ map, color: tint, side: THREE.DoubleSide }));
-  const clerestory = glassPane(6, WINDOW_HEIGHT).translate(0, CLERESTORY, 0);
-  const panes = [lancetGlass(5), lancetGlass(23), lancetGlass(71)];
-  panes.forEach((map, k) => {
-    group.add(instanced(clerestory, glass(map, 0x9b93a8), bayPlacements().filter((_, i) => i % 3 === k)));
-  });
+  // All of it is broken, in four different ways, half of them mirrored.
+  const panes = [5, 23, 71, 88].map(brokenLancet);
+  // Shares the windows at `places` out among the four, and adds them.
+  const glaze = (geometry, places, tint, first = 0) => {
+    panes.forEach((map, k) => {
+      const mine = places.filter((_, i) => (i + first) % panes.length === k);
+      if (mine.length) group.add(instanced(geometry, brokenGlassMaterial(map, tint), mine));
+    });
+  };
+  glaze(glassPane(6, WINDOW_HEIGHT).translate(0, CLERESTORY, 0), standing, 0x9b93a8);
 
-  const { tall, low } = endAndAisleWindows();
+  const { tall, low: everyLow } = endAndAisleWindows();
+  // The aisle windows went with the wall wherever it is breached.
+  const low = everyLow.filter(({ x, z }) => bayState({
+    x: Math.sign(x) * HALF,
+    z: Math.sign(z) * bayCentre(Math.floor((Math.abs(z) - HALF) / BAY)),
+  }) !== 'gone');
   const frameFor = (width, height) => moulding(lancetOutline(0, 0, width, height), 0.18, 0.05, 48);
+  glaze(glassPane(2.8, 12), tall, 0x9a92ac, 1);
+  glaze(glassPane(2.2, 8), low, 0x7d7690, 2);
   group.add(
-    instanced(glassPane(2.8, 12), glass(panes[1], 0x9a92ac), tall),
     instanced(stoneGeometry([frameFor(2.8, 12)]), stone, tall),
-  );
-  const aisle = glassPane(2.2, 8);
-  group.add(
-    instanced(aisle, glass(panes[2], 0x7d7690), low),
     instanced(stoneGeometry([frameFor(2.2, 8)]), stone, low),
   );
 
-  // Walls closing the four arms, and the outer walls of the nave aisles. All of
-  // them reach down as far as the piers.
-  const wall = (width, depth, top, x, z) => block(width, top - DEEP, depth, x, (top + DEEP) / 2, z);
-  const walls = [
-    wall(HALF * 2 + 18, 1, WALL_TOP, 0, -NAVE_END - 0.1),
-    wall(HALF * 2 + 18, 1, WALL_TOP, 0, NAVE_END + 0.1),
-  ];
-  for (const s of [-1, 1]) {
-    walls.push(wall(1, HALF * 2, WALL_TOP, s * (TRANSEPT_END + 0.1), 0));
-    for (const sz of [-1, 1]) {
-      walls.push(wall(1, BAY * NAVE_BAYS, ARCADE_APEX + 1, s * (HALF + 9), sz * (HALF + BAY * NAVE_BAYS / 2)));
-    }
-  }
-  const shell = new THREE.Mesh(stoneGeometry(walls), stone);
-  shell.position.y = BASE_Y;
-  group.add(shell);
+  // The great rose at the east end, broken open to the night.
+  const rose = brokenRose(stone);
+  group.add(rose);
 
-  // The great rose at the east end, with stone tracery around it.
-  const rose = new THREE.Mesh(
-    new THREE.CircleGeometry(7.5, 64),
-    new THREE.MeshBasicMaterial({ map: roseGlass(), color: 0xb4adc4, transparent: true, fog: false }),
-  );
-  rose.position.set(0, BASE_Y + 23.5, -NAVE_END + 0.55);
-  const ring = new THREE.Mesh(stoneGeometry([
-    new THREE.TorusGeometry(7.7, 0.45, 8, 64), new THREE.TorusGeometry(8.5, 0.2, 6, 64),
-  ]), stone);
-  ring.position.copy(rose.position);
-  group.add(rose, ring);
+  const lamps = createLamps();
+  group.add(lamps.group);
 
-  const shafts = addLightShafts(group);
-
-  const rubble = createFallingStone(stone);
-  group.add(rubble.group);
+  const sky = createSkyDome();
+  group.add(sky.mesh);
 
   // The stone costs the most to shade, so it is drawn after everything in
   // front of it: whatever is hidden is then never shaded at all.
@@ -384,8 +482,10 @@ export function addCathedral(scene) {
   });
 
   return {
-    update(seconds) { rubble.update(seconds); },
-    // Dropped on slow machines.
-    setShafts(visible) { shafts.visible = visible; },
+    update(seconds) {
+      sky.update(seconds);
+      lamps.update(seconds);
+      stoneTime.value = seconds;
+    },
   };
 }

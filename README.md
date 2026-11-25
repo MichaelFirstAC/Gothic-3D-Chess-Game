@@ -45,11 +45,14 @@ A loading screen covers the first few seconds. Behind it the game builds its tex
 
 ## The setting
 
-- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. It has no floor: the piers and walls run on down into a chasm and fade into black, with drifting dust and a faint cold haze. Hold S, or drag downward, for a low angle that looks up the nave.
-- **The stonework** is one plain colour with a soft polish and no texture, so nothing can repeat. Coloured light from the stained glass and warm candlelight near the board give every shaft and moulding a lit side and a shaded one. The building is coming apart: jagged cracks run through it in patches, flakes have broken from its face, and lumps of masonry tumble past the far walls into the chasm.
+- **The cathedral** is a High Gothic cathedral after Cologne, in ruins. Whole stretches of wall have gone, pillars are snapped to stumps, most vaults have fallen but for the ribs springing from the walls, and the outer walls end in ragged tops. All round it is a sky of stars and drifting dark cloud. It has the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, and at the east end what is left of the great rose window: a ragged hole right through the wall, with snapped tracery and a few teeth of glass. The other stained windows are broken too, and every gap shows the same night. It has no floor: the piers and walls run on down into a chasm and fade into black, with drifting dust and a faint cold haze. Hold S, or drag downward, for a low angle that looks up the nave.
+- **The moon** is part of the sky, as distant as the stars: a clean storybook disc with a few pale seas, which no cloud crosses. It shows through the broken east window, where the wall cuts a little off it from low beside the board. Moonlight comes from its direction: the light that casts the board's shadows is on that side, and through the east window it lights only the stone that can see it.
+- **The fires:** torches in iron brackets, caged lanterns hanging in the arches and fire bowls slung on chains, only on stone that still stands. All the ironwork is one mesh, and all the flames and halos are one draw each. Their light, with the window glows, is worked out once during loading into a grid through the building, so the walls read any number of lamps at the same small cost, and it flickers.
+- **The stonework** is one plain colour with a soft polish and no texture, so nothing can repeat. Coloured light from the stained glass and warm candlelight near the board give every shaft and moulding a lit side and a shaded one. The building is coming apart: jagged cracks run all over it and flakes have broken from its face.
 - **The rock pillar** is all that holds up the board. Its flat top is one slab of polished black marble with smoky, white and gold veins, inlaid with brass and pale stone, with a cut block that seats the board. It is painted as a single piece, so nothing on it repeats. Below are matte black boulders stacked down into the dark.
 - **Candles** have shader-drawn flames. Each stand's light flickers with the same noise as its flames.
 - **The board** keeps its marble squares, set in a carved stone frame seated on the dais.
+- **The pieces** are honed marble: ivory with brass trim and black with oxblood trim, both crowded with hair-thin veins, specks and small flaws, and duller where they are flawed. Shade gathers low on each piece, and a faint edge light lifts it off the dark. Fragments keep their veins when a piece shatters.
 
 ## Animations
 
@@ -70,7 +73,7 @@ The controls are at the bottom of the panel. **Mute sound** and the volume slide
 
 Repeated parts of the building are instanced, and the board squares and coordinates are merged into a few meshes. The number of pixels drawn is capped by the size of the window, so a large window on a high-density screen does not swamp a modest graphics chip. Shadows are redrawn only while something that casts one is moving. The cathedral is shaded last, and its shader skips lamps that cannot reach it.
 
-The game also measures its frame times and, if they stay slow, steps down in stages: lower resolution and smaller shadows, then no light shafts or drifting dust, then a lower resolution still. Add `?quality=high` or `?quality=low` to the address to fix the level.
+The game also measures its frame times and, if they stay slow, steps down in stages: lower resolution and smaller shadows, then no drifting dust, then a lower resolution still. Add `?quality=high` or `?quality=low` to the address to fix the level.
 
 ## The Inquisition (game review)
 
@@ -158,15 +161,21 @@ Not covered:
 | `src/pieces.js` | Gothic piece models |
 | `src/scene.js` | Lighting, camera, board squares, candle stands, highlights, best-move arrow |
 | `src/cathedral.js`, `src/frame.js`, `src/textures.js` | The building, the stone board surround, procedural textures |
-| `src/stoneMaterial.js`, `src/fallingStone.js` | The cathedral's plain cracked stone and its light, and the falling masonry |
+| `src/stoneMaterial.js` | The cathedral's plain cracked stone and its light |
+| `src/ruin.js`, `src/ruinPlan.js`, `src/skyDome.js` | How stonework breaks, what has fallen, and the sky behind it |
+| `src/lamps.js`, `src/lampPlan.js`, `src/lightBake.js` | The torches, lanterns and fire bowls, where they hang, and the stored light |
 | `src/pillar.js`, `src/pillarShape.js` | The rock pillar, its outline and where captured pieces stand |
-| `src/abyssFog.js`, `src/abyssAir.js` | The darkness below the board, dust and haze |
+| `src/abyssFog.js`, `src/abyssAir.js` | The darkness below the board and the specks of dust in it |
 | `src/candelabrum.js`, `src/candles.js` | The wrought-iron stands and their used candles |
 | `src/boardView.js` | The pieces on screen: moves, take-backs, the graveyard |
 | `src/effects/` | Flames, fracture, dissolve and shatter effects, animation timeline, knight arrow outline |
 | `src/audio.js`, `src/music.js` | Synthesised sound effects and reverb; background music |
 | `src/quality.js` | Frame-time check that lowers detail on slow machines |
 | `src/renderBudget.js` | The pixel cap and when shadows are redrawn |
+| `src/pick.js` | Which piece the pointer is over, found cheaply |
+| `src/brokenRose.js`, `src/roseShape.js` | The broken east window, its glass and the moonlight through it |
+| `src/brokenGlass.js`, `src/nightSky.js` | The other broken windows, and the sky and moon |
+| `src/pieceMarble.js` | The marble finish of the pieces |
 | `src/main.js` | Input, animation, side panel |
 | `src/reviewMode.js` | Review mode: stepping, ratings, eval bar, commentary |
 | `src/importDialog.js` | Import by username |

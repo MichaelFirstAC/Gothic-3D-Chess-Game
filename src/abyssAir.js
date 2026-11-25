@@ -1,7 +1,7 @@
-// The air over the chasm: dust that drifts slowly upward on a cold draught, and
-// a few very faint layers of haze rising from below.
+// The air over the chasm: specks of dust drifting slowly upward on a cold
+// draught.
 import * as THREE from 'three';
-import { noiseTexture, seededRandom } from './textures.js';
+import { seededRandom } from './textures.js';
 
 const MOTES = 750;
 // Motes rise through this span of heights, then start again at the bottom.
@@ -63,55 +63,10 @@ function motes(time) {
   return points;
 }
 
-function haze(time) {
-  const noise = noiseTexture(77);
-  const layers = [
-    { y: -5.5, strength: 0.05, drift: 0.006, inner: 6.5 },
-    { y: -10, strength: 0.06, drift: -0.004, inner: 5.5 },
-    { y: -17, strength: 0.045, drift: 0.003, inner: 4.5 },
-  ];
-  return layers.map(({ y, strength, drift, inner }, i) => {
-    const material = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: time, uNoise: { value: noise }, uStrength: { value: strength },
-        uDrift: { value: drift }, uInner: { value: inner }, uSeed: { value: i * 0.37 },
-      },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      vertexShader: /* glsl */ `
-        varying vec3 vAt;
-        void main() {
-          vec4 world = modelMatrix * vec4(position, 1.0);
-          vAt = world.xyz;
-          gl_Position = projectionMatrix * viewMatrix * world;
-        }`,
-      fragmentShader: /* glsl */ `
-        uniform sampler2D uNoise;
-        uniform float uTime, uStrength, uDrift, uInner, uSeed;
-        varying vec3 vAt;
-        void main() {
-          vec2 uv = vAt.xz * 0.019 + uSeed;
-          float a = texture2D(uNoise, uv + vec2(uTime * uDrift, uTime * uDrift * 0.6)).r;
-          float b = texture2D(uNoise, uv * 2.3 - vec2(uTime * uDrift * 1.4, 0.0)).g;
-          float wisp = smoothstep(0.42, 0.8, a * 0.65 + b * 0.35);
-          // Thins out toward the rock in the middle and the walls around.
-          float out_ = length(vAt.xz);
-          float fade = smoothstep(uInner, uInner + 4.0, out_) * (1.0 - smoothstep(11.0, 15.5, max(abs(vAt.x), abs(vAt.z))));
-          gl_FragColor = vec4(vec3(0.34, 0.44, 0.72) * wisp * fade * uStrength, 1.0);
-        }`,
-    });
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(32, 32).rotateX(-Math.PI / 2), material);
-    plane.position.y = y;
-    return plane;
-  });
-}
-
 export function createAbyssAir(scene) {
   const time = { value: 0 };
   const group = new THREE.Group();
-  group.add(motes(time), ...haze(time));
+  group.add(motes(time));
   scene.add(group);
   return {
     update(seconds) { time.value = seconds; },

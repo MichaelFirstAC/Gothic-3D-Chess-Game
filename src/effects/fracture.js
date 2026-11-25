@@ -107,6 +107,9 @@ export function fractureGeometries(geometries, { chunks = CHUNKS, seed = 1 } = {
     });
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    // Where this chunk sat in the whole piece, so its marble veins match.
+    const cutFrom = Array.from({ length: positions.length }, (_, i) => center[i % 3]);
+    geometry.setAttribute('cutFrom', new THREE.Float32BufferAttribute(cutFrom, 3));
     return { geometry, center: new THREE.Vector3(...center), radius };
   });
 }
