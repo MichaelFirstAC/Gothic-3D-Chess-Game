@@ -1,6 +1,6 @@
 # Gothic Chess
 
-A two-player 3D chess game with a gothic set, built with Three.js. All models and textures are generated in code. **The Inquisition** reviews your games: Stockfish rates every move, and Claude explains the key mistakes in plain language.
+A two-player 3D chess game with a gothic set, built with Three.js. All models and textures are generated in code. **The Inquisition** reviews your games: Stockfish rates every move and the panel comments on each one in plain language. With a free Groq key, an AI model explains the key mistakes.
 
 ## Run
 
@@ -14,7 +14,7 @@ npm run dev
 
 Then open the address Vite prints (usually http://localhost:5173). `npm test` runs the tests, `npm run build` writes the site to `dist/`, and `npm run preview` serves that build. Node.js 20.19+ or 22.12+ is required.
 
-The game and the engine review need no configuration. Written commentary and the Chess.com contact string come from environment variables.
+The game, the engine review and the commentary need no configuration. AI explanations and the Chess.com contact string come from environment variables.
 
 ### Environment variables
 
@@ -26,11 +26,11 @@ Copy-Item .env.example .env
 
 | Variable | Purpose |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Enables written commentary. Without it, the review still works and the panel says why there is no commentary. API calls are billed to this key. |
-| `ANTHROPIC_MODEL` | Optional. Defaults to `claude-sonnet-5-5`. |
+| `GROQ_API_KEY` | Optional. A free key from [console.groq.com](https://console.groq.com) enables AI explanations of the key moments. Without it, all commentary is written without AI. |
+| `GROQ_MODEL` | Optional. Defaults to `openai/gpt-oss-120b`. |
 | `CHESSCOM_CONTACT` | A contact detail (email address or project URL) added to the User-Agent sent to Chess.com. |
 
-`.env` is ignored by git. None of these variables has the `VITE_` prefix, so Vite never puts them in browser code. Only the server endpoints read them. Restart `npm run dev` after changing `.env`.
+A variable already set in your system environment takes priority over `.env`. `.env` is ignored by git. None of these variables has the `VITE_` prefix, so Vite never puts them in browser code. Only the server endpoints read them. Restart `npm run dev` after changing them.
 
 ## Controls
 
@@ -66,9 +66,15 @@ The lite engine and a fixed depth make this a quick review. A deeper search can 
 
 ### Commentary
 
-Stockfish decides how good each move is. Claude only explains moves the engine has already flagged: the reviewed side's mistakes and blunders plus the three largest swings, at most six per game, in one request. For an imported game, the reviewed side is the player whose name you looked up. Otherwise both sides are reviewed. Dotted underlines mark the explained moves, and a three-point summary appears at the final position.
+Stockfish decides how good each move is. The commentary only puts its findings into words.
 
-For each of these moves, the server sends Anthropic the position, the move played, the engine's best move and line, the engine's expected reply to the move played, the evaluations, the move number and the game phase. Usernames are not sent. The explanations are generated text and can be wrong, so check them against the engine's lines.
+**Without AI (always available).** The browser comments on every move and gives three lessons at the final position, with no network request. For each marked move it first checks what the engine's lines show: a mate allowed or missed, a stalemate, a piece left to be taken, a fork, material won or lost, an early queen, a king move that gives up castling, a loosened king shield or a knight on the edge. It then picks wording for that case from a few hundred phrases. A phrase is not reused within a game until the others in its group have been, and the same game always reads the same way. When no reason can be established, it says so instead of inventing one. Marked moves with no clear tactic are the most common case, so that is where you will notice repetition first.
+
+**With Groq (optional).** The reviewed side's mistakes and blunders plus the three largest swings, at most six per game, are sent in one request. Their explanations replace the stock text, and dotted underlines mark them. For an imported game, the reviewed side is the player whose name you looked up. Otherwise both sides are reviewed. If Groq is unavailable, over its limit or not set up, the stock text stays and the panel says why. Groq's free plan has request and token limits; see your [limits page](https://console.groq.com/settings/limits).
+
+**AI explanations can be wrong.** In testing, `openai/gpt-oss-120b` often misread captures and piece positions. The server therefore tells the model, in words worked out by the rules engine, where every piece stands, what each move in the engine's lines does and how the material ends up. It then drops any explanation that names a move outside those lines, puts a piece on a square it never occupies, or reports lost material the lines do not show. These checks catch only some errors. Wrong strategic claims and misdescribed sequences still get through, so trust the ratings and the arrow over the prose.
+
+For each key moment, the server sends Groq the position, the move played, the engine's best move and line, the engine's expected reply to the move played, the evaluations, the move number, the game phase and the facts described above. Usernames are not sent.
 
 ## Importing games
 
@@ -79,12 +85,12 @@ Game data comes from [Chess.com's Published-Data API](https://www.chess.com/news
 ## Deploying to Vercel
 
 1. Push the repository to GitHub, GitLab or Bitbucket, and import it as a new Vercel project. Vercel detects Vite: the build command is `npm run build` and the output directory is `dist`. No `vercel.json` is needed.
-2. In the project's **Settings → Environment Variables**, add `ANTHROPIC_API_KEY` and `CHESSCOM_CONTACT` (and `ANTHROPIC_MODEL` if you want one).
+2. In the project's **Settings → Environment Variables**, add `CHESSCOM_CONTACT`, plus `GROQ_API_KEY` if you want AI explanations (and `GROQ_MODEL` to change the model).
 3. Deploy. The files in `api/` become the `/api/explain` and `/api/chesscom` functions. Redeploy after changing a variable.
 
-On a static host without these functions, the game and the engine review still work. Import and commentary report that they are unavailable.
+On a static host without these functions, the game, the engine review and the commentary written without AI still work. Import and AI explanations report that they are unavailable.
 
-**Before sharing a public link:** anyone who can reach your deployment can use these endpoints, and commentary is billed to your API key. `/api/explain` accepts only well-formed chess data (six moves at most), refuses calls from pages on other sites, and limits each address to 10 requests per 10 minutes. Neither check stops a determined script, and the limit is counted separately by each server instance. Set a spend limit on the key, or turn on Vercel's deployment protection or firewall rate limiting.
+**Before sharing a public link:** anyone who can reach your deployment can use these endpoints, and AI requests use your Groq allowance (or your bill, on a paid plan). `/api/explain` accepts only well-formed chess data (six moves at most), refuses calls from pages on other sites, and limits each address to 10 requests per 10 minutes. Neither check stops a determined script, and the limit is counted separately by each server instance. Stay on the free plan or set a spend limit, or turn on Vercel's deployment protection or firewall rate limiting.
 
 ## Third-party licences
 
@@ -120,7 +126,9 @@ Not covered:
 | `src/main.js` | Input, animation, side panel |
 | `src/reviewMode.js` | Review mode: stepping, ratings, eval bar, commentary |
 | `src/importDialog.js` | Import by username |
-| `src/analysis/` | Stockfish wrapper, review pass, scoring math, key moments, commentary client |
+| `src/analysis/` | Stockfish wrapper, review pass, scoring math, key moments, commentary |
+| `src/analysis/narrator.js`, `phrasebook.js` | Commentary written without AI: the checks, then the wording |
+| `src/analysis/grounding.js` | Facts given to the AI model, and checks on its replies |
 | `api/` | Server endpoints (Vercel functions, also mounted by the Vite dev and preview servers) |
 | `server/http.js` | Helpers shared by the endpoints |
 | `test/` | Rules, notation, analysis and endpoint tests; `fixtures/` holds a real public game from the Published-Data API |

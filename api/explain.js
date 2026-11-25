@@ -1,24 +1,34 @@
-// POST /api/explain: asks Claude to put already-flagged moves into plain words.
-// Stockfish has done the judging; Claude only explains what the engine found.
-// The API key stays on the server.
-import Anthropic from '@anthropic-ai/sdk';
+// POST /api/explain: asks a model hosted by Groq to put already-flagged moves
+// into plain words. Stockfish has done the judging; the model only explains what
+// the engine found. The API key stays on the server. When this fails, the
+// browser keeps the commentary it wrote without AI.
 import {
   HttpError, sendJson, sendError, readJson, createRateLimiter, clientAddress, isCrossSite,
 } from '../server/http.js';
+import { describeFacts, groundMoment, contradiction } from '../src/analysis/grounding.js';
 
-export const DEFAULT_MODEL = 'claude-sonnet-5-5';
+export const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+export const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+// Models Groq lists as enforcing a JSON schema exactly. Others get plain JSON mode.
+const STRICT_SCHEMA_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
 const MAX_MOMENTS = 6;
 const MAX_BODY_BYTES = 20000;
+// Kept well under the free plan's tokens-per-minute allowance.
+const MAX_OUTPUT_TOKENS = 4096;
+const TIMEOUT_MS = 60000;
 
 export const SYSTEM_PROMPT = `You are a chess coach talking to a club player about their game.
 Stockfish has already analysed the game and flagged the moves below. Its findings are the ground truth: do not judge the positions yourself or disagree with its verdicts.
 
 For each flagged move, write 2 to 4 sentences that explain why the move played was worse, naming the concrete idea (a hanging piece, a missed fork, a weakened king, a lost tempo and so on), and what the engine's move would have achieved.
-Support what you say only with the position given and the two lines given: the engine's best line, and the engine's expected continuation after the move played. Do not invent other variations or mention moves outside those lines. If the lines do not show a clear concrete reason, say plainly what the evaluation change shows instead of guessing.
+The facts listed under each move (where every piece stands, what each move in the two lines does, and the material result) were worked out by a chess program. Take them as given and do not work out your own from the FEN or the notation. Say a piece is lost, won or attacking something only if those facts show it. If a line is an even trade, call it a trade.
+Support what you say only with those facts and the two lines given: the engine's best line, and the engine's expected continuation after the move played. Do not invent other variations or mention moves outside those lines. If the lines do not show a clear concrete reason, say plainly what the evaluation change shows instead of guessing.
 
 Evaluations are from White's side: positive favours White, negative favours Black. "M3" means White can force mate in 3, "-M3" means Black can, and "1-0" or "0-1" means checkmate is on the board.
 
-Use plain language. Return one entry in "moments" for every flagged move, with its "ply" number unchanged. In "summary", give exactly 3 short bullet points with the main lessons from these moments.`;
+Use plain language. When you name a move, write it exactly as it appears in the lines given.
+
+Reply with JSON only, shaped as {"moments": [{"ply": number, "explanation": string}], "summary": [string]}. Return one entry in "moments" for every flagged move, with its "ply" number unchanged. In "summary", give exactly 3 short bullet points with the main lessons from these moments.`;
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -91,72 +101,123 @@ export function buildPrompt({ moments, reviewedSide }) {
     `Engine's best line: ${m.bestLine.join(' ') || 'none'}`,
     `Expected continuation after ${m.played}: ${m.replyLine.join(' ') || 'none (the game ends here)'}`,
     `Evaluation before: ${m.evalBefore}   after: ${m.evalAfter}`,
+    describeFacts(m),
   ].join('\n'));
   return `${intro}\n\n${blocks.join('\n\n')}`;
 }
 
-// Parameters for the Messages API call.
+// The body of the chat completion request.
 export function buildParams(request, model) {
   const params = {
     model,
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildPrompt(request) }],
-    output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: buildPrompt(request) },
+    ],
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
+    temperature: 0.2,
+    response_format: STRICT_SCHEMA_MODELS.includes(model)
+      ? { type: 'json_schema', json_schema: { name: 'commentary', strict: true, schema: OUTPUT_SCHEMA } }
+      : { type: 'json_object' },
   };
-  // These two options are not accepted by every model, so a model chosen with
-  // ANTHROPIC_MODEL gets only the parameters above.
-  if (model === DEFAULT_MODEL) {
-    params.output_config.effort = 'medium';
-    // If a safety classifier declines, the API retries on a recommended model.
-    params.betas = ['server-side-fallback-2026-07-01'];
-    params.fallbacks = 'default';
+  // Reasoning options differ between models, so only the gpt-oss ones get them.
+  if (/^openai\/gpt-oss-(120|20)b$/.test(model)) {
+    params.reasoning_effort = 'medium';
+    params.include_reasoning = false;
   }
   return params;
 }
 
-// Keeps only what was asked for from the model's reply.
+// ---------------------------------------------------------------- the reply
+
+// Piece moves, pawn captures and castling. A bare square such as "d5" is left
+// alone, because it cannot be told apart from the name of a square.
+const NAMED_MOVE = /(?<![A-Za-z0-9])(O-O-O|O-O|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](=[QRBN])?|[a-h]x[a-h][1-8](=[QRBN])?)(?![A-Za-z0-9])/g;
+
+const bare = (san) => san.replace(/[+#]+$/, '');
+
+const linesOf = (m) => [m.played, m.best, ...m.bestLine, ...m.replyLine].filter(Boolean).map(bare);
+
+// True if the text names a move that is not in the engine's findings.
+export function inventsMoves(text, allowed) {
+  return (text.replace(/0-0/g, 'O-O').match(NAMED_MOVE) || []).some((move) => !allowed.has(move));
+}
+
+// Keeps only what was asked for. Drops any explanation that names an outside
+// move or contradicts what the engine's lines show.
 export function readReply(response, request) {
-  if (response.stop_reason === 'refusal') {
-    throw new HttpError(502, 'refused', 'Claude declined to comment on this game.');
-  }
-  if (response.stop_reason === 'max_tokens') {
-    throw new HttpError(502, 'truncated', 'The commentary was cut off before it finished.');
+  const choice = response?.choices?.[0];
+  if (choice?.finish_reason === 'length') {
+    throw new HttpError(502, 'truncated', 'The AI commentary was cut off before it finished.');
   }
   let data;
   try {
-    data = JSON.parse(response.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+    data = JSON.parse(choice.message.content);
   } catch {
-    throw new HttpError(502, 'bad_reply', 'The commentary came back in an unreadable form.');
+    throw new HttpError(502, 'bad_reply', 'The AI commentary came back in an unreadable form.');
   }
-  const asked = new Set(request.moments.map((m) => m.ply));
+  const asked = new Map(request.moments.map((m) => [m.ply, { moves: new Set(linesOf(m)), facts: groundMoment(m) }]));
+  const trusted = (ply, text) => {
+    const { moves, facts } = asked.get(ply);
+    return !inventsMoves(text, moves) && !contradiction(text, facts);
+  };
+  const everything = new Set(request.moments.flatMap(linesOf));
+  const list = (value) => (Array.isArray(value) ? value : []);
   return {
-    moments: (data.moments || []).filter((m) => asked.has(m.ply) && typeof m.explanation === 'string'),
-    summary: (data.summary || []).filter((line) => typeof line === 'string').slice(0, 3),
+    moments: list(data?.moments)
+      .filter((m) => asked.has(m?.ply) && typeof m.explanation === 'string' && m.explanation.trim()
+        && trusted(m.ply, m.explanation))
+      .map(({ ply, explanation }) => ({ ply, explanation })),
+    summary: list(data?.summary)
+      .filter((line) => typeof line === 'string' && line.trim() && !inventsMoves(line, everything))
+      .slice(0, 3),
   };
 }
 
-function describeFailure(error) {
-  if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
-    return new HttpError(502, 'bad_api_key', 'The server\'s Anthropic API key was rejected.');
+function describeFailure(status) {
+  if (status === 401 || status === 403) {
+    return new HttpError(502, 'bad_api_key', 'The server\'s Groq API key was rejected.');
   }
-  if (error instanceof Anthropic.NotFoundError) {
-    return new HttpError(502, 'bad_model', 'The configured Claude model was not found. Check ANTHROPIC_MODEL.');
+  if (status === 404) {
+    return new HttpError(502, 'bad_model', 'The configured Groq model was not found. Check GROQ_MODEL.');
   }
-  if (error instanceof Anthropic.RateLimitError) {
-    return new HttpError(429, 'rate_limited', 'Claude is rate limited just now. Try again in a minute.');
+  if (status === 413 || status === 429) {
+    return new HttpError(429, 'rate_limited', 'Groq\'s usage limit was reached. Try again later.');
   }
-  return new HttpError(502, 'upstream', 'Claude could not be reached just now.');
+  return new HttpError(502, 'upstream', 'Groq could not complete the request just now.');
 }
 
 // ---------------------------------------------------------------- handler
 
 export function createExplainHandler({
   env = process.env,
-  createClient = (apiKey) => new Anthropic({ apiKey, timeout: 90000, maxRetries: 1 }),
+  fetchImpl = fetch,
   allow = createRateLimiter({ max: 10, windowMs: 10 * 60 * 1000 }),
   log = console.error,
 } = {}) {
+  async function askGroq(params) {
+    let response;
+    let body;
+    try {
+      response = await fetchImpl(API_URL, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.GROQ_API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      body = await response.json().catch(() => null);
+    } catch (error) {
+      log('explain: Groq could not be reached:', error.message);
+      throw describeFailure(0);
+    }
+    if (!response.ok) {
+      // Logged for the person running the server; never sent to the browser.
+      log('explain: Groq request failed:', response.status, body?.error?.message ?? '');
+      throw describeFailure(response.status);
+    }
+    return body;
+  }
+
   return async function handler(req, res) {
     try {
       if (req.method !== 'POST') {
@@ -167,25 +228,15 @@ export function createExplainHandler({
       if (!String(req.headers['content-type']).startsWith('application/json')) {
         throw new HttpError(415, 'bad_content_type', 'Send JSON.');
       }
-      if (!env.ANTHROPIC_API_KEY) {
-        throw new HttpError(503, 'no_api_key', 'No Anthropic API key is set on the server.');
+      if (!env.GROQ_API_KEY) {
+        throw new HttpError(503, 'no_api_key', 'No Groq API key is set on the server.');
       }
       const request = validateRequest(await readJson(req, MAX_BODY_BYTES));
       if (!allow(clientAddress(req))) {
         throw new HttpError(429, 'rate_limited', 'Too many commentary requests. Try again in a few minutes.');
       }
-      const params = buildParams(request, env.ANTHROPIC_MODEL || DEFAULT_MODEL);
-      let response;
-      try {
-        const client = createClient(env.ANTHROPIC_API_KEY);
-        response = params.betas
-          ? await client.beta.messages.create(params)
-          : await client.messages.create(params);
-      } catch (error) {
-        log('explain: Claude request failed:', error.status ?? '', error.message);
-        throw describeFailure(error);
-      }
-      sendJson(res, 200, readReply(response, request));
+      const reply = await askGroq(buildParams(request, env.GROQ_MODEL || DEFAULT_MODEL));
+      sendJson(res, 200, readReply(reply, request));
     } catch (error) {
       if (error instanceof HttpError) sendError(res, error);
       else {

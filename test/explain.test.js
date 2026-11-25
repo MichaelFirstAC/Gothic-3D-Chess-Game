@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import Anthropic from '@anthropic-ai/sdk';
 import { START_FEN } from '../src/engine.js';
 import { gamePhase, selectKeyMoments, buildCommentaryRequest } from '../src/analysis/moments.js';
 import { fetchCommentary } from '../src/analysis/commentary.js';
-import { createExplainHandler, validateRequest, buildPrompt, DEFAULT_MODEL } from '../api/explain.js';
+import {
+  createExplainHandler, validateRequest, buildPrompt, inventsMoves, API_URL,
+} from '../api/explain.js';
 
 const rated = (ply, classification, drop, color = ply % 2 ? 'w' : 'b') => ({
   ply, color, classification, drop,
@@ -94,14 +95,14 @@ const post = (url, body, headers = {}) => fetch(url, {
 });
 
 test('without an API key the endpoint says so and calls nothing', async () => {
-  const handler = createExplainHandler({ env: {}, createClient: () => assert.fail('no client expected') });
+  const handler = createExplainHandler({ env: {}, fetchImpl: () => assert.fail('no request expected') });
   await serve(handler, async (url) => {
     const response = await post(url, sample());
     assert.equal(response.status, 503);
     assert.equal((await response.json()).error, 'no_api_key');
     await assert.rejects(
       fetchCommentary(sample(), { url }),
-      { name: 'CommentaryUnavailable', message: /No Anthropic API key/ },
+      { name: 'CommentaryUnavailable', message: /No Groq API key/ },
     );
   });
 });
@@ -109,9 +110,9 @@ test('without an API key the endpoint says so and calls nothing', async () => {
 test('the endpoint refuses bad methods, origins, bodies and floods', async () => {
   let calls = 0;
   const handler = createExplainHandler({
-    env: { ANTHROPIC_API_KEY: 'test-key' },
+    env: { GROQ_API_KEY: 'test-key' },
     allow: () => ++calls < 1,
-    createClient: () => assert.fail('no client expected'),
+    fetchImpl: () => assert.fail('no request expected'),
   });
   await serve(handler, async (url) => {
     assert.equal((await fetch(url)).status, 405);
@@ -124,79 +125,111 @@ test('the endpoint refuses bad methods, origins, bodies and floods', async () =>
   });
 });
 
-// A stand-in for api.anthropic.com, so the real SDK's request can be inspected.
-async function withFakeAnthropic(reply, run, env = {}) {
+// A stand-in for Groq, so the request it would receive can be inspected.
+async function withFakeGroq(reply, run, env = {}) {
   const seen = [];
-  const fake = (req, res) => {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      seen.push({ url: req.url, headers: req.headers, body: JSON.parse(body) });
-      res.writeHead(reply.status || 200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(reply.body));
-    });
+  const fetchImpl = async (url, options) => {
+    seen.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+    if (reply instanceof Error) throw reply;
+    return new Response(JSON.stringify(reply.body), { status: reply.status || 200 });
   };
-  await serve(fake, (baseURL) => serve(createExplainHandler({
-    env: { ANTHROPIC_API_KEY: 'test-key', ...env },
-    createClient: (apiKey) => new Anthropic({ apiKey, baseURL, maxRetries: 0 }),
-    log: () => {},
-  }), (url) => run(url, seen)));
+  const handler = createExplainHandler({ env: { GROQ_API_KEY: 'test-key', ...env }, fetchImpl, log: () => {} });
+  await serve(handler, (url) => run(url, seen));
 }
 
-const message = (content, stop = 'end_turn') => ({
+const completion = (content, finish = 'stop') => ({
   body: {
-    id: 'msg_test', type: 'message', role: 'assistant', model: DEFAULT_MODEL,
-    content: [{ type: 'text', text: JSON.stringify(content) }],
-    stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 },
+    choices: [{
+      index: 0,
+      finish_reason: finish,
+      message: { role: 'assistant', content: typeof content === 'string' ? content : JSON.stringify(content) },
+    }],
   },
 });
 
-test('one batched Messages request, with structured output', async () => {
+test('one batched chat completion, with a strict JSON schema', async () => {
   const content = {
-    moments: [{ ply: 3, explanation: 'Slow.' }, { ply: 99, explanation: 'Not asked for.' }],
+    moments: [{ ply: 3, explanation: 'Slow. e4 was better.' }, { ply: 99, explanation: 'Not asked for.' }],
     summary: ['one', 'two', 'three', 'four'],
   };
-  await withFakeAnthropic(message(content), async (url, seen) => {
+  await withFakeGroq(completion(content), async (url, seen) => {
     const result = await fetchCommentary(sample(), { url });
-    assert.deepEqual([...result.moments], [[3, 'Slow.']], 'moves that were not asked about are dropped');
+    assert.deepEqual([...result.moments], [[3, 'Slow. e4 was better.']], 'moves that were not asked about are dropped');
     assert.deepEqual(result.summary, ['one', 'two', 'three']);
 
     assert.equal(seen.length, 1);
-    const [{ url: path, headers, body }] = seen;
-    assert.match(path, /^\/v1\/messages/);
-    // Only the configured key is sent (SDK 1.x sends it as a bearer token).
+    const [{ url: target, headers, body }] = seen;
+    assert.equal(target, API_URL);
+    assert.equal(target, 'https://api.groq.com/openai/v1/chat/completions');
     assert.equal(headers.authorization, 'Bearer test-key');
-    assert.match(headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
-    assert.equal(body.model, 'claude-sonnet-5-5');
-    assert.equal(body.fallbacks, 'default');
-    assert.equal(body.output_config.format.type, 'json_schema');
-    assert.equal(body.output_config.effort, 'medium');
-    assert.match(body.system, /Stockfish/);
-    assert.equal(body.messages.length, 1);
+    assert.equal(body.model, 'openai/gpt-oss-120b');
+    assert.equal(body.response_format.type, 'json_schema');
+    assert.equal(body.response_format.json_schema.strict, true);
+    assert.equal(body.reasoning_effort, 'medium');
+    assert.equal(body.include_reasoning, false);
+    assert.ok(body.max_completion_tokens <= 4096);
+    assert.deepEqual(body.messages.map((m) => m.role), ['system', 'user']);
+    assert.match(body.messages[0].content, /Stockfish/);
+    assert.match(body.messages[0].content, /JSON/);
   });
 });
 
-test('ANTHROPIC_MODEL overrides the model and drops model-specific options', async () => {
-  await withFakeAnthropic(message({ moments: [], summary: [] }), async (url, seen) => {
+test('GROQ_MODEL overrides the model and drops model-specific options', async () => {
+  await withFakeGroq(completion({ moments: [], summary: [] }), async (url, seen) => {
     assert.equal((await post(url, sample())).status, 200);
-    const [{ headers, body }] = seen;
-    assert.equal(body.model, 'claude-other-model');
-    assert.equal(body.fallbacks, undefined);
-    assert.equal(body.output_config.effort, undefined);
-    assert.equal(headers['anthropic-beta'], undefined);
-  }, { ANTHROPIC_MODEL: 'claude-other-model' });
+    const [{ body }] = seen;
+    assert.equal(body.model, 'some/other-model');
+    assert.deepEqual(body.response_format, { type: 'json_object' });
+    assert.equal(body.reasoning_effort, undefined);
+    assert.equal(body.include_reasoning, undefined);
+  }, { GROQ_MODEL: 'some/other-model' });
+});
+
+test('explanations naming moves outside the engine lines are dropped', async () => {
+  // The sample's lines hold a3, e4 and e5 only.
+  const allowed = new Set(['a3', 'e4', 'e5']);
+  assert.ok(!inventsMoves('e4 takes the centre; the pawn on d5 and the f7 square matter.', allowed));
+  for (const text of ['Then Nf3 wins.', 'Black has Qxh2+.', 'After exd5 it falls apart.', 'Castle with O-O.', 'Or 0-0-0.']) {
+    assert.ok(inventsMoves(text, allowed), text);
+  }
+  assert.ok(!inventsMoves('Nxe5+ was the idea.', new Set(['Nxe5'])), 'a check sign does not matter');
+
+  const content = {
+    moments: [{ ply: 3, explanation: 'This allows Qh4.' }, { ply: 6, explanation: 'e4 was stronger.' }],
+    summary: ['Watch for Bb5.', 'Take the centre.', 'Stay calm.'],
+  };
+  await withFakeGroq(completion(content), async (url) => {
+    const result = await fetchCommentary(sample(), { url });
+    assert.deepEqual([...result.moments.keys()], [6]);
+    assert.deepEqual(result.summary, ['Take the centre.', 'Stay calm.']);
+  });
+});
+
+test('a reply of the wrong shape is not trusted', async () => {
+  for (const content of [{ moments: 'x', summary: 7 }, null, { moments: [null, { ply: 3 }] }]) {
+    await withFakeGroq(completion(content), async (url) => {
+      const response = await post(url, sample());
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { moments: [], summary: [] });
+    });
+  }
 });
 
 test('upstream failures become readable messages without leaking details', async () => {
+  const failed = (status) => ({ status, body: { error: { message: 'secret detail', type: 'x' } } });
   const cases = [
-    [{ status: 401, body: { type: 'error', error: { type: 'authentication_error', message: 'secret detail' } } }, 502, /key was rejected/],
-    [{ status: 429, body: { type: 'error', error: { type: 'rate_limit_error', message: 'secret detail' } } }, 429, /rate limited/],
-    [{ status: 500, body: { type: 'error', error: { type: 'api_error', message: 'secret detail' } } }, 502, /could not be reached/],
-    [message({}, 'refusal'), 502, /declined/],
-    [message({}, 'max_tokens'), 502, /cut off/],
+    [failed(401), 502, /key was rejected/],
+    [failed(404), 502, /model was not found/],
+    [failed(429), 429, /usage limit/],
+    [failed(413), 429, /usage limit/],
+    [failed(500), 502, /could not complete/],
+    [new Error('secret detail'), 502, /could not complete/],
+    [completion('{"moments": [', 'length'), 502, /cut off/],
+    [completion('not json'), 502, /unreadable/],
+    [{ body: {} }, 502, /unreadable/],
   ];
   for (const [reply, status, wording] of cases) {
-    await withFakeAnthropic(reply, async (url) => {
+    await withFakeGroq(reply, async (url) => {
       const response = await post(url, sample());
       const text = await response.text();
       assert.equal(response.status, status);

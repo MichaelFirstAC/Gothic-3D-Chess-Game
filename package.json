@@ -10,7 +10,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "1.14.0",
     "stockfish": "19.0.1",
     "three": "0.186.0"
   },

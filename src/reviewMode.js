@@ -7,6 +7,7 @@ import { reviewGame } from './analysis/review.js';
 import { formatScore, scoreCp, winPercent } from './analysis/score.js';
 import { buildCommentaryRequest } from './analysis/moments.js';
 import { fetchCommentary } from './analysis/commentary.js';
+import { narrateReview } from './analysis/narrator.js';
 
 const NAMES = { w: 'White', b: 'Black' };
 const MARKS = { best: '★', good: '', inaccuracy: '?!', mistake: '?', blunder: '??' };
@@ -107,7 +108,7 @@ export function createReviewMode(view) {
         button.title = LABELS[rated.classification];
         if (MARKS[rated.classification]) button.append(element('span', 'mark', MARKS[rated.classification]));
       }
-      if (session.commentary?.keyPlies.has(index + 1)) button.classList.add('key');
+      if (session.commentary?.aiPlies.has(index + 1)) button.classList.add('key');
       if (index === session.cursor - 1) {
         button.classList.add('current');
         button.setAttribute('aria-current', 'step');
@@ -150,7 +151,7 @@ export function createReviewMode(view) {
       lines.push(element('p', `verdict-title ${rated.classification}`,
         `${number} ${rated.san}: ${LABELS[rated.classification]}`));
       if (rated.best && rated.classification !== 'best') {
-        lines.push(element('p', 'verdict-detail', `The engine preferred ${rated.best.san} (green arrow).`));
+        lines.push(element('p', 'verdict-detail', `Green arrow: ${rated.best.san}`));
       }
     } else if (review) {
       lines.push(element('p', 'verdict-detail', 'Step through the game with the arrow keys, or choose a move.'));
@@ -158,31 +159,34 @@ export function createReviewMode(view) {
     $('verdict').replaceChildren(...lines);
   }
 
-  // Claude's explanation of a key moment, and the summary at the end.
+  // The comment on the move shown, and the three lessons at the end.
   function renderCommentary() {
     const { cursor, commentary } = session;
-    const isKey = Boolean(commentary?.keyPlies.has(cursor));
-    const text = commentary?.result?.moments.get(cursor);
-    $('explanation').textContent = text
-      || (isKey && commentary.status === 'loading' ? 'The scribe is writing about this move…' : '');
+    const text = commentary?.moments.get(cursor) || '';
+    if ($('explanation').textContent !== text) {
+      $('explanation').textContent = text;
+      $('insight').scrollTop = 0;
+    }
 
-    const summary = cursor === total() ? commentary?.result?.summary : null;
+    const summary = cursor === total() ? commentary?.summary : null;
     $('summary').hidden = !summary?.length;
     $('summary-list').replaceChildren(...(summary || []).map((line) => element('li', '', line)));
 
     let note = '';
-    if (commentary?.status === 'unavailable') {
-      note = `No written commentary. ${commentary.message} The engine review is complete.`;
-    } else if (commentary?.status === 'quiet') note = 'No key moments to explain.';
-    else if (commentary?.status === 'loading') note = 'Writing commentary on the key moments…';
-    else if (commentary?.status === 'ready') {
-      note = 'Dotted underlines mark moves with commentary, written by Claude from the engine\'s findings.';
+    if (commentary?.status === 'loading') {
+      note = 'Asking Groq for a closer reading of the key moments…';
+    } else if (commentary?.status === 'ai') {
+      note = 'Dotted underlines mark moves explained by AI (via Groq) from the engine\'s findings. '
+        + 'AI can still get the chess wrong; ratings and arrows come from Stockfish. Other notes are written without AI.';
+    } else if (commentary?.status === 'local') {
+      note = ['Written without AI, from the engine\'s findings.', commentary.reason].filter(Boolean).join(' ');
     }
     $('commentary-note').textContent = note;
   }
 
-  // Asks for commentary once the engine has judged the game. A finished answer
-  // is kept with the cached review; failures are retried on the next visit.
+  // Comments on every move are written here at once, without AI. If Groq is set
+  // up, its explanations then replace the ones on the key moments. A successful
+  // answer is kept with the cached review; failures are retried next visit.
   async function narrate(own) {
     const { review } = own;
     if (review.commentary) {
@@ -190,23 +194,32 @@ export function createReviewMode(view) {
       renderPanel();
       return;
     }
-    const request = buildCommentaryRequest(review, own.record.side ?? null);
-    const keyPlies = new Set(request.moments.map((m) => m.ply));
-    if (!keyPlies.size) {
-      own.commentary = { status: 'quiet', keyPlies };
+    const side = own.record.side ?? null;
+    const local = { ...narrateReview(review, side), aiPlies: new Set() };
+    const request = buildCommentaryRequest(review, side);
+    if (!request.moments.length) {
+      own.commentary = { ...local, status: 'local' };
       renderPanel();
       return;
     }
-    own.commentary = { status: 'loading', keyPlies };
+    own.commentary = { ...local, status: 'loading' };
     renderPanel();
     try {
-      const result = await fetchCommentary(request, { signal: own.controller.signal });
-      review.commentary = { status: 'ready', keyPlies, result };
+      const ai = await fetchCommentary(request, { signal: own.controller.signal });
+      const aiSummary = ai.summary.length === 3;
+      const used = ai.moments.size > 0 || aiSummary;
+      review.commentary = {
+        status: used ? 'ai' : 'local',
+        reason: used ? '' : 'The AI reply did not match the engine\'s lines, so it was set aside.',
+        moments: new Map([...local.moments, ...ai.moments]),
+        summary: aiSummary ? ai.summary : local.summary,
+        aiPlies: new Set(ai.moments.keys()),
+      };
       own.commentary = review.commentary;
     } catch (error) {
       if (own.controller.signal.aborted) return;
       if (error.name !== 'CommentaryUnavailable') console.error(error);
-      own.commentary = { status: 'unavailable', keyPlies: new Set(), message: error.message };
+      own.commentary = { ...local, status: 'local', reason: error.message };
     }
     if (session === own) renderPanel();
   }
