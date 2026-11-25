@@ -10,6 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "stockfish": "19.0.1",
     "three": "0.186.0"
   },
   "devDependencies": {
