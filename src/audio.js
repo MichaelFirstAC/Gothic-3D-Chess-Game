@@ -5,11 +5,16 @@
 // it in SOUND_FILES, for example  capture: '/sounds/capture.ogg'. Callers only
 // ever ask for a sound by name, so nothing else changes.
 
+import { createDrone } from './music.js';
+
 export const SOUND_FILES = {};
 
 const STORAGE_KEY = 'gothic-chess-audio';
-export const DEFAULT_SETTINGS = { muted: false, volume: 0.7 };
+export const DEFAULT_SETTINGS = { muted: false, volume: 0.7, music: false, musicVolume: 0.4 };
 const REVERB_SECONDS = 4.2;
+const MUSIC_FADE = 2; // seconds
+const MUSIC_TRIM = 0.7; // keeps the music well under the effects
+const DUCK = 0.5; // how far the music dips while an effect sounds
 
 // ---------------------------------------------------------------- pure helpers
 
@@ -24,6 +29,8 @@ export function loadSettings(storage) {
   return {
     muted: typeof saved.muted === 'boolean' ? saved.muted : DEFAULT_SETTINGS.muted,
     volume: clampVolume(saved.volume, DEFAULT_SETTINGS.volume),
+    music: typeof saved.music === 'boolean' ? saved.music : DEFAULT_SETTINGS.music,
+    musicVolume: clampVolume(saved.musicVolume, DEFAULT_SETTINGS.musicVolume),
   };
 }
 
@@ -274,12 +281,43 @@ export function createAudio({ storage = () => window.localStorage } = {}) {
         .then((decoded) => files.set(name, decoded))
         .catch(() => { /* the synthesised sound is used instead */ });
     }
-    return { ctx, bus, kit: createKit(ctx), effects: bus(level()) };
+    const kit = createKit(ctx);
+    // Music has its own volume, with a second gain that dips under the effects.
+    const music = bus(0);
+    const duck = ctx.createGain();
+    duck.connect(music);
+    const drone = createDrone(ctx, duck, (at, notes, loudness, length) => choir(ctx, kit, duck, at, notes, loudness, length));
+    return { ctx, kit, effects: bus(level()), music, duck, drone };
+  }
+
+  // Fades the music in or out over a couple of seconds.
+  function applyMusic() {
+    if (!graph) return;
+    const { ctx, music, drone } = graph;
+    const target = settings.music ? settings.musicVolume * MUSIC_TRIM : 0;
+    const now = ctx.currentTime;
+    const turningOn = settings.music && !drone.playing;
+    music.gain.cancelScheduledValues(now);
+    music.gain.setValueAtTime(music.gain.value, now);
+    music.gain.linearRampToValueAtTime(target, now + (turningOn || !settings.music ? MUSIC_FADE : 0.15));
+    if (turningOn) drone.start();
+    else if (!settings.music && drone.playing) drone.stop(MUSIC_FADE);
+  }
+
+  function dip(at) {
+    const { duck, drone } = graph;
+    if (!drone.playing) return;
+    duck.gain.cancelScheduledValues(at);
+    duck.gain.setTargetAtTime(DUCK, at, 0.05);
+    duck.gain.setTargetAtTime(1, at + 0.7, 0.5);
   }
 
   function unlock() {
+    const first = !graph;
     graph ||= build();
     if (graph?.ctx.state === 'suspended') graph.ctx.resume();
+    // Music left on last time starts with the first gesture.
+    if (first && settings.music) applyMusic();
     return graph;
   }
 
@@ -299,6 +337,7 @@ export function createAudio({ storage = () => window.localStorage } = {}) {
       // The same sound twice in the same instant would only be louder.
       if (at - (lastPlayed.get(name) ?? -1) < 0.03) return;
       lastPlayed.set(name, at);
+      if (name !== 'click') dip(at);
       const recording = files.get(name);
       if (recording) {
         const source = ctx.createBufferSource();
@@ -311,7 +350,10 @@ export function createAudio({ storage = () => window.localStorage } = {}) {
     set(changes) {
       Object.assign(settings, changes);
       apply();
+      if ('music' in changes || 'musicVolume' in changes) applyMusic();
     },
+    // Development aid.
+    get graph() { return graph; },
   };
 }
 

@@ -541,6 +541,14 @@ $('sound-mute').addEventListener('change', (event) => audio.set({ muted: event.t
 $('sound-volume').addEventListener('input', (event) => audio.set({ volume: event.target.value / 100 }));
 $('sound-volume').addEventListener('change', () => audio.play('place'));
 
+$('music-on').checked = audio.settings.music;
+$('music-volume').value = Math.round(audio.settings.musicVolume * 100);
+$('music-on').addEventListener('change', (event) => {
+  audio.unlock();
+  audio.set({ music: event.target.checked });
+});
+$('music-volume').addEventListener('input', (event) => audio.set({ musicVolume: event.target.value / 100 }));
+
 // ---------------------------------------------------------------- start
 
 let lastFrame = 0;
