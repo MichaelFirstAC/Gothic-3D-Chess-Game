@@ -307,49 +307,6 @@ export function lancetGlass(seed) {
   });
 }
 
-export function roseGlass() {
-  const colors = ['#8d1630', '#1f3f98', '#60207f', '#106350', '#b27f1c'];
-  return canvasTexture(1024, (ctx, size) => {
-    const c = size / 2;
-    ctx.fillStyle = '#0b090e';
-    ctx.beginPath();
-    ctx.arc(c, c, c, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.translate(c, c);
-    const petal = (count, inner, outer, shift) => {
-      for (let i = 0; i < count; i++) {
-        ctx.save();
-        ctx.rotate((i / count) * Math.PI * 2);
-        const half = Math.tan(Math.PI / count) * outer * 0.72;
-        ctx.beginPath();
-        ctx.moveTo(0, -inner);
-        ctx.quadraticCurveTo(half * 1.3, -(inner + outer) / 2, 0, -outer);
-        ctx.quadraticCurveTo(-half * 1.3, -(inner + outer) / 2, 0, -inner);
-        ctx.fillStyle = colors[(i + shift) % colors.length];
-        ctx.fill();
-        ctx.lineWidth = 9;
-        ctx.strokeStyle = '#08060a';
-        ctx.stroke();
-        ctx.restore();
-      }
-    };
-    petal(24, 340, 490, 1);
-    petal(16, 190, 355, 0);
-    petal(8, 60, 215, 2);
-    ctx.lineWidth = 16;
-    ctx.strokeStyle = '#4a4250';
-    for (const r of [60, 345, 498]) {
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#d0a032';
-    ctx.beginPath();
-    ctx.arc(0, 0, 52, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
 // Cracks in old masonry, white on black, tiling both ways. Each runs mostly
 // downward in short, sharp turns, thins out, and throws off finer splits.
 export function crackTexture(seed, size = 1024) {
@@ -372,8 +329,8 @@ export function crackTexture(seed, size = 1024) {
       y = ny;
     }
   };
-  for (let i = 0; i < 17; i++) {
-    crack(random() * size, random() * size, Math.PI / 2 + range(-0.8, 0.8), Math.round(range(12, 34)), range(2.6, 6), 2);
+  for (let i = 0; i < 34; i++) {
+    crack(random() * size, random() * size, Math.PI / 2 + range(-0.8, 0.8), Math.round(range(12, 34)), range(2.8, 6.6), 2);
   }
 
   const canvas = makeCanvas(size, size, (ctx) => {
@@ -401,24 +358,6 @@ export function crackTexture(seed, size = 1024) {
   return texture;
 }
 
-export function shaftTexture() {
-  return paintedTexture(128, 256, (ctx, width, height) => {
-    const image = ctx.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const across = Math.sin((x / (width - 1)) * Math.PI) ** 2;
-        const ribs = 0.8 + 0.2 * Math.sin(x * 0.31) * Math.sin(x * 0.13 + 1);
-        const along = (1 - y / height) ** 0.8 * Math.min(1, y / 20);
-        const i = (y * width + x) * 4;
-        image.data[i] = image.data[i + 1] = image.data[i + 2] = 255;
-        image.data[i + 3] = 255 * across * ribs * along;
-      }
-    }
-    ctx.putImageData(image, 0, 0);
-  });
-}
-
-// A soft round glow.
 export function glowTexture(size = 128, inner = 0) {
   return canvasTexture(size, (ctx) => {
     const half = size / 2;

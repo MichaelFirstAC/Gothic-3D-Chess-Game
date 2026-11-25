@@ -6,6 +6,7 @@ import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
 import { createBoardView } from './boardView.js';
 import { createShadowWatch } from './renderBudget.js';
+import { nearestPiece } from './pick.js';
 import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
 import { createKeyTracker, createKeyMotion, clampTarget } from './keyCamera.js';
@@ -92,9 +93,10 @@ function homeCamera() {
 }
 
 // Applied after every camera move, so panning stays within bounds.
+const back = new THREE.Vector3();
 function keepInBounds() {
   const kept = clampTarget(controls.target);
-  const back = new THREE.Vector3(kept.x, kept.y, kept.z).sub(controls.target);
+  back.set(kept.x, kept.y, kept.z).sub(controls.target);
   if (back.lengthSq() === 0) return;
   controls.target.add(back);
   camera.position.add(back);
@@ -400,13 +402,8 @@ function pickSquare(event) {
     -((event.clientY - rect.top) / rect.height) * 2 + 1,
   ), camera);
 
-  let onPiece = -1;
-  const hit = raycaster.intersectObjects(boardView.pieces.children, true)[0];
-  if (hit) {
-    let object = hit.object;
-    while (object.userData.square === undefined) object = object.parent;
-    onPiece = object.userData.square;
-  }
+  // Against simple stand-ins for the pieces: this runs as the mouse moves.
+  const onPiece = nearestPiece(raycaster.ray, boardView.pieces.children)?.userData.square ?? -1;
 
   let onBoard = -1;
   const point = raycaster.ray.intersectPlane(boardPlane, new THREE.Vector3());
@@ -456,9 +453,20 @@ canvas.addEventListener('pointerup', (event) => {
   }
   press = null;
 });
+// A mouse can report far more often than the screen is drawn, so only its
+// latest place is looked at, once a frame.
+let pointed = null;
 canvas.addEventListener('pointermove', (event) => {
   if (event.pointerType !== 'mouse' || review.active) return;
-  const square = busy || event.buttons ? -1 : pickSquare(event);
+  const waiting = pointed !== null;
+  pointed = { clientX: event.clientX, clientY: event.clientY, buttons: event.buttons };
+  if (!waiting) requestAnimationFrame(markPointed);
+});
+function markPointed() {
+  const at = pointed;
+  pointed = null;
+  if (!at || review.active) return;
+  const square = busy || at.buttons ? -1 : pickSquare(at);
   const useful = square >= 0 && (isOwnPiece(square)
     || (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)));
   canvas.classList.toggle('pointing', useful);
@@ -467,7 +475,7 @@ canvas.addEventListener('pointermove', (event) => {
     hovered = next;
     renderMarks();
   }
-});
+}
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !dialog.open && !review.active) select(-1);
 });

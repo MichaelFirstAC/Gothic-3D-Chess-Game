@@ -4,8 +4,8 @@
 
 // For each quality level: the most pixels to draw, and the sharpest ratio.
 const BUDGETS = [
-  { pixels: 2.1e6, ratio: 1.5 },
-  { pixels: 1.5e6, ratio: 1.25 },
+  { pixels: 1.75e6, ratio: 1.35 },
+  { pixels: 1.35e6, ratio: 1.15 },
   { pixels: 1.1e6, ratio: 1 },
   { pixels: 0.8e6, ratio: 0.85 },
 ];

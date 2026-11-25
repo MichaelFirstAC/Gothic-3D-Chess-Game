@@ -29,7 +29,8 @@ const vertexShader = /* glsl */ `
   }
 `;
 
-const fragmentShader = /* glsl */ `
+// Also used, with its numbers passed per flame, by the cathedral's lamps.
+export const flameShader = /* glsl */ `
   uniform float uTime;
   uniform float uSeed;
   uniform float uStrength;
@@ -101,7 +102,7 @@ export function createFlame(seed) {
     uTime: { value: 0 }, uSeed: { value: seed * 13.7 }, uStrength: { value: 1 }, uSway: { value: new THREE.Vector2() },
   };
   const flame = new THREE.Mesh(quad, new THREE.ShaderMaterial({
-    uniforms, vertexShader, fragmentShader,
+    uniforms, vertexShader, fragmentShader: flameShader,
     transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
   }));
   // The shader moves the quad, so it must not be culled by its rest position.

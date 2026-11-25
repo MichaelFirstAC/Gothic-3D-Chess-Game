@@ -22,8 +22,11 @@ const NOISE = /* glsl */ `
   }
 `;
 
-function patch(material, uniforms) {
-  material.onBeforeCompile = (shader) => {
+// Adds dissolving to a copy, on top of whatever its original already does to
+// the shader.
+function patch(material, original, uniforms) {
+  material.onBeforeCompile = (shader, renderer) => {
+    original.onBeforeCompile(shader, renderer);
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vLocal;\nvarying float vWorldY;')
@@ -41,8 +44,8 @@ function patch(material, uniforms) {
         float rim = uDissolve > 0.0 ? 1.0 - smoothstep(0.0, 0.1, speckle - uDissolve) : 0.0;
         totalEmissiveRadiance += uEdge * (rim * 2.6 + uGlow);`);
   };
-  // All patched materials share their compiled programs.
-  material.customProgramCacheKey = () => 'dissolve';
+  // Copies of like originals share their compiled programs.
+  material.customProgramCacheKey = () => `dissolve ${original.customProgramCacheKey()}`;
 }
 
 // Sets of copies waiting to be used again. They are never disposed: disposing
@@ -58,7 +61,7 @@ function buildSet(materials, edge, doubleSided) {
     const copy = material.clone();
     // Chunks are open shells, so their insides must be drawn too.
     if (doubleSided) copy.side = THREE.DoubleSide;
-    patch(copy, uniforms);
+    patch(copy, material, uniforms);
     return copy;
   });
   return { uniforms, copies };

@@ -6,6 +6,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
 import { canvasTexture, paintedTexture, marble } from './textures.js';
 import { pixelRatioFor } from './renderBudget.js';
+import { MOONLIGHT } from './roseShape.js';
 import { addCathedral } from './cathedral.js';
 import { createCandelabra } from './candelabrum.js';
 import { addFrame } from './frame.js';
@@ -163,14 +164,21 @@ export function createScene(container) {
   scene.environmentIntensity = 0.34;
 
   scene.add(new THREE.HemisphereLight(0x8c93c4, 0x2a1810, 0.55));
-  const moon = new THREE.DirectionalLight(0xcfd8ff, 1.85);
-  moon.position.set(-6, 13, 4);
+  // It comes from the side of the sky the moon is on, held a little higher than
+  // the moon so that shadows on the board stay short.
+  const moon = new THREE.DirectionalLight(0xcfd8ff, 1.55);
+  moon.position.set(-MOONLIGHT.x, Math.max(-MOONLIGHT.y, 0.55), -MOONLIGHT.z).normalize().multiplyScalar(18);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
   Object.assign(moon.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 30 });
   moon.shadow.bias = -0.0004;
   moon.shadow.normalBias = 0.02;
   scene.add(moon);
+  // The moon is behind black's side, so a soft light from the front keeps the
+  // faces turned to the other side from falling into darkness.
+  const fill = new THREE.DirectionalLight(0xc6c8e8, 0.8);
+  fill.position.set(-6, 12, 9);
+  scene.add(fill);
   // Colored rim light, as if through stained glass, to separate the black pieces.
   for (const [color, x, z] of [[0xb0304a, 9, -7], [0x4a52d0, -9, -7], [0x8040a0, 0, 10]]) {
     const rim = new THREE.DirectionalLight(color, 0.8);
@@ -213,7 +221,6 @@ export function createScene(container) {
     }
     // Shadows are never switched off: doing so would rebuild every shader in
     // the middle of a game, and they now cost little.
-    cathedral.setShafts(level < 2);
     air.setVisible(level < 2);
   }, qualityOptions());
 
