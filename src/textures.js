@@ -350,100 +350,55 @@ export function roseGlass() {
   });
 }
 
-// Bare rock: lumps and grain at many sizes, split by fine cracks. Tiles in both
-// directions. Returns a colour map and a relief map.
-export function rockSurface(seed, size = 1024) {
+// Cracks in old masonry, white on black, tiling both ways. Each runs mostly
+// downward in short, sharp turns, thins out, and throws off finer splits.
+export function crackTexture(seed, size = 1024) {
   const random = seededRandom(seed);
-  const lattice = Float32Array.from({ length: 65536 }, () => random());
-  // Smooth tiling noise: `cells` lumps across the texture.
-  const value = (x, y, cells, salt) => {
-    const gx = (x / size) * cells;
-    const gy = (y / size) * cells;
-    const x0 = Math.floor(gx);
-    const y0 = Math.floor(gy);
-    const at = (i, j) => lattice[(((j % cells) * 251 + (i % cells) * 13 + salt * 977) & 65535)];
-    const fx = gx - x0;
-    const fy = gy - y0;
-    const sx = fx * fx * (3 - 2 * fx);
-    const sy = fy * fy * (3 - 2 * fy);
-    const top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
-    const bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
-    return top + (bottom - top) * sy;
+  const range = (min, max) => min + random() * (max - min);
+  const segments = [];
+  const crack = (x, y, heading, steps, width, branching) => {
+    let angle = heading;
+    for (let step = 0; step < steps; step++) {
+      angle += range(-0.75, 0.75) + (heading - angle) * 0.35;
+      const length = range(8, 26);
+      const nx = x + Math.cos(angle) * length;
+      const ny = y + Math.sin(angle) * length;
+      segments.push([x, y, nx, ny, width * (1 - 0.85 * (step / steps))]);
+      if (branching > 0 && random() < 0.11) {
+        crack(nx, ny, angle + (random() < 0.5 ? -1 : 1) * range(0.6, 1.3),
+          Math.round(steps * range(0.25, 0.55)), width * 0.5, branching - 1);
+      }
+      x = nx;
+      y = ny;
+    }
   };
-  // Scattered points that divide the surface into broken faces, each tipped its
-  // own way. `cells` of them cross the texture.
-  const facets = (cells) => {
-    const points = Array.from({ length: cells * cells }, (_, i) => ({
-      x: (i % cells) + random(), y: Math.floor(i / cells) + random(),
-      tiltX: random() - 0.5, tiltY: random() - 0.5, lift: random(),
-    }));
-    return (x, y) => {
-      const gx = (((x / size) * cells) % cells + cells) % cells;
-      const gy = (((y / size) * cells) % cells + cells) % cells;
-      let near = 9;
-      let next = 9;
-      let face = 0;
-      for (let j = -1; j <= 1; j++) {
-        for (let i = -1; i <= 1; i++) {
-          const cx = Math.floor(gx) + i;
-          const cy = Math.floor(gy) + j;
-          const p = points[((cy + cells) % cells) * cells + ((cx + cells) % cells)];
-          const dx = p.x + (cx < 0 ? -cells : cx >= cells ? cells : 0) - gx;
-          const dy = p.y + (cy < 0 ? -cells : cy >= cells ? cells : 0) - gy;
-          const d = Math.hypot(dx, dy);
-          if (d < near) {
-            next = near;
-            near = d;
-            face = p.lift + dx * p.tiltX * 1.3 + dy * p.tiltY * 1.3;
-          } else if (d < next) next = d;
+  for (let i = 0; i < 17; i++) {
+    crack(random() * size, random() * size, Math.PI / 2 + range(-0.8, 0.8), Math.round(range(12, 34)), range(2.6, 6), 2);
+  }
+
+  const canvas = makeCanvas(size, size, (ctx) => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#fff';
+    ctx.lineCap = 'round';
+    for (const [x, y, nx, ny, width] of segments) {
+      ctx.lineWidth = width;
+      // Drawn again across each edge it comes near, so the tile has no seam.
+      for (const dx of [-size, 0, size]) {
+        for (const dy of [-size, 0, size]) {
+          if (Math.max(x, nx) + dx < -8 || Math.min(x, nx) + dx > size + 8) continue;
+          if (Math.max(y, ny) + dy < -8 || Math.min(y, ny) + dy > size + 8) continue;
+          ctx.beginPath();
+          ctx.moveTo(x + dx, y + dy);
+          ctx.lineTo(nx + dx, ny + dy);
+          ctx.stroke();
         }
       }
-      return { face, edge: next - near };
-    };
-  };
-  const large = facets(7);
-  const small = facets(23);
-  const heights = new Float32Array(size * size);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      // A little warping keeps the breaks from running dead straight.
-      const wx = x + (value(x, y, 13, 1) - 0.5) * 46;
-      const wy = y + (value(x, y, 13, 2) - 0.5) * 46;
-      let lumps = 0;
-      let amplitude = 0.5;
-      for (let octave = 0; octave < 4; octave++) {
-        lumps += value(x, y, 16 << octave, 3 + octave) * amplitude;
-        amplitude *= 0.58;
-      }
-      const a = large(wx, wy);
-      const b = small(wx, wy);
-      // Cracks follow some of the larger breaks and then die out.
-      const open = Math.max(0, value(x, y, 6, 11) * 2.6 - 1.25);
-      const crack = Math.max(0, 1 - a.edge * 22) * Math.min(1, open);
-      heights[y * size + x] = 0.06 + lumps * 0.55 + a.face * 0.13 + b.face * 0.1
-        - crack * 0.2 + (random() - 0.5) * 0.09;
     }
-  }
-  const paint = (shade) => makeCanvas(size, size, (ctx) => {
-    const image = ctx.createImageData(size, size);
-    for (let i = 0; i < heights.length; i++) {
-      image.data.set(shade(heights[i], i), i * 4);
-    }
-    ctx.putImageData(image, 0, 0);
   });
-  const byte = (v) => Math.max(0, Math.min(255, v));
-  const color = paint((h) => {
-    const tone = byte(4 + h * 232);
-    return [tone, tone * 0.965, tone * 0.93, 255];
-  });
-  const relief = paint((h) => {
-    const level = byte(h * 255);
-    return [level, level, level, 255];
-  });
-  const map = asTexture(color);
-  const normalMap = normalFromHeight(relief, 2.4);
-  for (const texture of [map, normalMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  return { map, normalMap };
+  const texture = asTexture(canvas, THREE.NoColorSpace);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return texture;
 }
 
 export function shaftTexture() {

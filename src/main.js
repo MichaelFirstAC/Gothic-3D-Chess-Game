@@ -5,10 +5,13 @@ import { Game, inCheck, colorOf, squareName, applyMove, legalMoves } from './eng
 import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
 import { createBoardView } from './boardView.js';
+import { createShadowWatch } from './renderBudget.js';
 import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
-import { createKeyTracker, steerCamera, clampTarget } from './keyCamera.js';
+import { createKeyTracker, createKeyMotion, clampTarget } from './keyCamera.js';
 import { openImportDialog } from './importDialog.js';
+import { showProgress, showFailure, nextPaint, reveal } from './loading.js';
+import { drawEverything, untilSmooth } from './warmup.js';
 
 const NAMES = { w: 'White', b: 'Black' };
 const GLYPHS = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
@@ -17,7 +20,7 @@ const VALUE_ORDER = 'qrbnp';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
-const { renderer, scene, camera, update, quality } = createScene(stage);
+const { renderer, scene, camera, update, quality, fitResolution } = createScene(stage);
 const highlights = createHighlights(scene);
 const bestArrow = createBestMoveArrow(scene);
 const makePiece = createPieceFactory();
@@ -71,7 +74,10 @@ controls.target.set(0, 0, 0);
 
 let viewSide = 'w';
 let cameraMoved = false;
-controls.addEventListener('start', () => { cameraMoved = true; });
+controls.addEventListener('start', () => {
+  cameraMoved = true;
+  keyMotion.stop();
+});
 
 // Far enough back to show the board on its pillar with the candles at its
 // corners, and farther still where a narrow viewport needs it for the width.
@@ -105,6 +111,7 @@ function turnCamera(side) {
   delta = Math.atan2(Math.sin(delta), Math.cos(delta));
   if (Math.abs(Math.abs(delta) - Math.PI) < 0.01) delta = Math.PI;
   controls.enabled = false;
+  keyMotion.stop();
   return tween(900, (t) => {
     camera.position
       .setFromSpherical(new THREE.Spherical(start.radius, start.phi, start.theta + delta * t))
@@ -113,13 +120,16 @@ function turnCamera(side) {
   }).then(() => { controls.enabled = true; });
 }
 
-const cameraKeys = createKeyTracker(window, () => $('dialog').open);
+let loading = true;
+const cameraKeys = createKeyTracker(window, () => loading || $('dialog').open);
+
+const keyMotion = createKeyMotion();
 
 function steerFromKeys(seconds) {
-  if (!cameraKeys.size) return;
-  cameraMoved = true;
   const offset = camera.position.clone().sub(controls.target);
-  const next = steerCamera(new THREE.Spherical().setFromVector3(offset), cameraKeys, seconds, controls);
+  const next = keyMotion.step(new THREE.Spherical().setFromVector3(offset), cameraKeys, seconds, controls);
+  if (!next) return;
+  cameraMoved = true;
   camera.position
     .setFromSpherical(new THREE.Spherical(next.radius, next.phi, next.theta))
     .add(controls.target);
@@ -128,6 +138,7 @@ function steerFromKeys(seconds) {
 function resize() {
   const { clientWidth: width, clientHeight: height } = stage;
   if (!width || !height) return;
+  fitResolution();
   renderer.setSize(width, height);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
@@ -577,8 +588,9 @@ $('music-volume').addEventListener('input', (event) => audio.set({ musicVolume: 
 
 // ---------------------------------------------------------------- start
 
+const shadowsChanged = createShadowWatch(boardView.casters);
 let lastFrame = 0;
-renderer.setAnimationLoop((now) => {
+function drawFrame(now) {
   const elapsed = lastFrame ? now - lastFrame : 0;
   lastFrame = now;
   runTweens(performance.now());
@@ -592,16 +604,54 @@ renderer.setAnimationLoop((now) => {
   update(now / 1000, elapsed);
   highlights.pulse(now / 1000);
   bestArrow.pulse(now / 1000);
+  if (shadowsChanged(boardView.timeline.size > 0)) renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
-});
+}
 
 resize();
 syncPieces();
 render();
-// After the first frames, get the capture effects ready.
-const prepared = new Promise((resolve) => setTimeout(resolve, 150))
-  .then(() => boardView.prepare(renderer, camera))
-  .catch((error) => console.warn('Effects could not be prepared early:', error));
+
+// Gets the capture effects ready, and with them every shader and mesh, so that
+// nothing is left to stall on once the loading screen has gone.
+async function warmUp() {
+  showProgress('Raising the vaults…', 0.45);
+  await nextPaint();
+  // The markers and the arrow are only made when first shown.
+  highlights.show(['selected', 'last', 'hover', 'target', 'capture', 'check']
+    .map((style, square) => ({ square, style })));
+  bestArrow.show({ from: 1, to: 18 });
+  try {
+    await renderer.compileAsync(scene, camera);
+    showProgress('Lighting the candles…', 0.65);
+    await nextPaint();
+    drawEverything(renderer, scene, camera);
+  } finally {
+    bestArrow.show(null);
+    render();
+  }
+  try {
+    await boardView.prepare(renderer, camera);
+  } catch (error) {
+    console.warn('Effects could not be prepared early:', error);
+  }
+}
+
+const prepared = warmUp().catch((error) => console.warn('Warm-up was cut short:', error));
+
+// Runs behind the loading screen until the frame rate is steady.
+const ready = prepared.then(async () => {
+  showProgress('Letting the dust settle…', 0.85);
+  quality.hurry(true);
+  renderer.setAnimationLoop(drawFrame);
+  await untilSmooth({ ready: () => quality.settled });
+  quality.hurry(false);
+  await reveal();
+  loading = false;
+}).catch((error) => {
+  showFailure();
+  throw error;
+});
 
 // Development-only handle for driving the board from the console.
 if (import.meta.env.DEV) {
@@ -616,6 +666,7 @@ if (import.meta.env.DEV) {
     renderer,
     renderNow: () => renderer.render(scene, camera),
     prepared: () => prepared,
+    ready: () => ready,
     move: (from, to) => makeMove(from, to),
     reduceMotion: (value) => { forceReducedMotion = value; },
     // Screen position of a square, for simulating real clicks.

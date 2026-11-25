@@ -20,7 +20,8 @@ function rookShift(move) {
   return { from: short ? move.to + 1 : move.to - 2, to: short ? move.to - 1 : move.to + 1 };
 }
 
-// Captured pieces stand in two rows on the rock ledge on their captor's side.
+// Captured pieces stand in two rows on the rock beside the board, on their
+// captor's side.
 export function graveyardSlots(history) {
   const counts = { w: 0, b: 0 };
   const slots = [];
@@ -216,10 +217,12 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
     try {
       await renderer.compileAsync(warm.group, camera, scene);
       // Some drivers finish a shader only when it is first drawn.
+      renderer.shadowMap.needsUpdate = true;
       renderer.render(scene, camera);
       warm.done();
     } finally {
       scene.remove(warm.group);
+      renderer.shadowMap.needsUpdate = true;
     }
     for (const letter of 'PpNnBbRrQqKk') {
       await new Promise((resolve) => (window.requestIdleCallback
@@ -230,6 +233,8 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
 
   return {
     pieces,
+    // Everything here that can cast a moving shadow.
+    casters: [pieces, graveyard, effectsGroup],
     prepare,
     sync,
     refreshGraveyard,

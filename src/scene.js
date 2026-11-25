@@ -1,9 +1,11 @@
 // The setting: marble board, carved frame, candle towers and lighting. The rock
 // they stand on is in pillar.js and the building around them in cathedral.js.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
-import { canvasTexture, marble } from './textures.js';
+import { canvasTexture, paintedTexture, marble } from './textures.js';
+import { pixelRatioFor } from './renderBudget.js';
 import { addCathedral } from './cathedral.js';
 import { createCandelabra } from './candelabrum.js';
 import { addFrame } from './frame.js';
@@ -21,6 +23,8 @@ function addBoard(scene, environment) {
   const materials = Object.fromEntries(Object.entries(textures).map(([k, map]) => [
     k, new THREE.MeshStandardMaterial({ map, roughness: 0.34, metalness: 0.12 }),
   ]));
+  // All the light squares are one mesh and all the dark ones another.
+  const tiles = { light: [], dark: [] };
   for (let sq = 0; sq < 64; sq++) {
     const light = ((sq & 7) + (sq >> 3)) % 2 === 1;
     const geometry = new THREE.BoxGeometry(1, 0.2, 1);
@@ -29,49 +33,62 @@ function addBoard(scene, environment) {
     for (let i = 0; i < uv.count; i++) {
       uv.setXY(i, (uv.getX(i) + (sq & 7)) / 8, (uv.getY(i) + (sq >> 3)) / 8);
     }
-    const tile = new THREE.Mesh(geometry, materials[light ? 'light' : 'dark']);
-    tile.position.copy(squarePosition(sq)).setY(-0.1);
-    tile.receiveShadow = true;
-    tile.userData.square = sq;
-    scene.add(tile);
+    const { x, z } = squarePosition(sq);
+    tiles[light ? 'light' : 'dark'].push(geometry.translate(x, -0.1, z));
+  }
+  for (const [shade, parts] of Object.entries(tiles)) {
+    const mesh = new THREE.Mesh(mergeGeometries(parts), materials[shade]);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
   }
 
   addFrame(scene, environment);
 
-  const label = (text) => {
-    const map = canvasTexture(128, (ctx) => {
-      ctx.font = '600 88px "EB Garamond", Georgia, serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 9;
+  // The sixteen letters and numbers are painted on one sheet, eight across.
+  const marks = [...'abcdefgh12345678'];
+  const sheet = paintedTexture(1024, 256, (ctx) => {
+    ctx.font = '600 88px "EB Garamond", Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 9;
+    marks.forEach((text, i) => {
+      const x = (i % 8) * 128 + 64;
+      const y = Math.floor(i / 8) * 128 + 68;
       ctx.strokeStyle = 'rgba(8,6,10,0.85)';
-      ctx.strokeText(text, 64, 68);
+      ctx.strokeText(text, x, y);
       ctx.fillStyle = '#e3d6b6';
-      ctx.fillText(text, 64, 68);
+      ctx.fillText(text, x, y);
     });
-    return new THREE.Mesh(
-      new THREE.PlaneGeometry(0.3, 0.3),
-      new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false }),
-    );
-  };
-  const labels = [];
-  for (let i = 0; i < 8; i++) {
-    for (const side of [1, -1]) {
-      const file = label('abcdefgh'[i]);
-      file.position.set(i - 3.5, 0.038, side * 4.265);
-      const rank = label(String(i + 1));
-      rank.position.set(-side * 4.265, 0.038, 3.5 - i);
-      labels.push(file, rank);
+  });
+  const ink = new THREE.MeshBasicMaterial({ map: sheet, transparent: true, depthWrite: false });
+  // All thirty-two coordinates as one mesh, each turned by this angle.
+  const coordinates = (spin) => {
+    const place = (text, x, z) => {
+      const cell = marks.indexOf(text);
+      const geometry = new THREE.PlaneGeometry(0.3, 0.3);
+      const uv = geometry.attributes.uv;
+      for (let i = 0; i < uv.count; i++) {
+        uv.setXY(i, ((cell % 8) + uv.getX(i)) / 8, (1 - Math.floor(cell / 8) + uv.getY(i)) / 2);
+      }
+      return geometry.rotateZ(spin).rotateX(-Math.PI / 2).translate(x, 0.038, z);
+    };
+    const parts = [];
+    for (let i = 0; i < 8; i++) {
+      for (const side of [1, -1]) {
+        parts.push(place('abcdefgh'[i], i - 3.5, side * 4.265), place(String(i + 1), -side * 4.265, 3.5 - i));
+      }
     }
-  }
-  for (const mesh of labels) {
-    mesh.rotation.x = -Math.PI / 2;
+    const mesh = new THREE.Mesh(mergeGeometries(parts), ink);
     scene.add(mesh);
-  }
+    return mesh;
+  };
+  const forWhite = coordinates(0);
+  const forBlack = coordinates(Math.PI);
   // Keeps the coordinates upright for whichever side the camera is on.
   return (cameraZ) => {
-    for (const mesh of labels) mesh.rotation.z = cameraZ < 0 ? Math.PI : 0;
+    forWhite.visible = cameraZ >= 0;
+    forBlack.visible = cameraZ < 0;
   };
 }
 
@@ -126,6 +143,10 @@ function qualityOptions() {
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.shadowMap.enabled = true;
+  // Shadows are redrawn only when asked for (see main.js): most of the time
+  // nothing that casts one is moving.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
@@ -173,18 +194,27 @@ export function createScene(container) {
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
 
+  // Sets how many pixels are drawn, for the quality level and the window size.
+  let detail = 0;
+  const fitResolution = () => {
+    const ratio = pixelRatioFor(detail, window.devicePixelRatio, container.clientWidth, container.clientHeight);
+    if (Math.abs(ratio - renderer.getPixelRatio()) > 0.001) renderer.setPixelRatio(ratio);
+  };
+
   const quality = createQualityGovernor((level) => {
-    const ratio = Math.min(window.devicePixelRatio, [2, 1.25, 1, 0.85][level]);
-    renderer.setPixelRatio(ratio);
+    detail = level;
+    fitResolution();
     const shadowSize = level === 0 ? 2048 : 1024;
     if (moon.shadow.mapSize.width !== shadowSize) {
       moon.shadow.mapSize.set(shadowSize, shadowSize);
       moon.shadow.map?.dispose();
       moon.shadow.map = null;
+      renderer.shadowMap.needsUpdate = true;
     }
+    // Shadows are never switched off: doing so would rebuild every shader in
+    // the middle of a game, and they now cost little.
     cathedral.setShafts(level < 2);
     air.setVisible(level < 2);
-    moon.castShadow = level < 3;
   }, qualityOptions());
 
   // At low camera angles, shift the view upward like an architect's lens, so
@@ -200,11 +230,12 @@ export function createScene(container) {
   };
 
   return {
-    renderer, scene, camera, quality,
+    renderer, scene, camera, quality, fitResolution,
     update(time, elapsed) {
       quality.frame(elapsed);
       flickerCandles(time);
       air.update(time);
+      cathedral.update(time);
       orientLabels(camera.position.z);
       raiseView();
     },

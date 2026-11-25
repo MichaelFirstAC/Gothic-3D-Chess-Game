@@ -1,5 +1,6 @@
 // Camera control from the keyboard: A/D turn around the board, W/S tilt, and
-// Q/E zoom out and in. Held keys move the camera smoothly.
+// Q/E zoom out and in. The camera gathers speed while a key is held and glides
+// to a stop when it is let go.
 
 // Physical key positions, so the layout matches on AZERTY and other keyboards.
 export const KEY_ACTIONS = {
@@ -16,19 +17,50 @@ const TILT_SPEED = 0.9;
 const ZOOM_SPEED = 1.1; // distance changes by this factor's natural log per second
 const MIN_TILT = 0.05; // just short of straight down
 
+// How quickly the speed catches up with the keys, per second. Starting is a
+// little brisker than stopping, so that it answers at once but settles softly.
+const SPEED_UP = 9;
+const SLOW_DOWN = 7;
+// Below this speed a released camera is simply still.
+const REST = 0.004;
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-// Moves { radius, phi, theta } by the held keys over `seconds`, within limits.
-export function steerCamera({ radius, phi, theta }, held, seconds, { minDistance, maxDistance, maxPolarAngle }) {
-  const push = { theta: 0, phi: 0, zoom: 0 };
-  for (const code of held) {
-    const action = KEY_ACTIONS[code];
-    if (action) push[action[0]] += action[1];
-  }
+// Carries the camera's speed from one frame to the next.
+export function createKeyMotion() {
+  const speed = { theta: 0, phi: 0, zoom: 0 };
+  const stop = () => { speed.theta = speed.phi = speed.zoom = 0; };
   return {
-    theta: theta + push.theta * TURN_SPEED * seconds,
-    phi: clamp(phi + push.phi * TILT_SPEED * seconds, MIN_TILT, maxPolarAngle),
-    radius: clamp(radius * Math.exp(push.zoom * ZOOM_SPEED * seconds), minDistance, maxDistance),
+    stop,
+    // Moves { radius, phi, theta } on by `seconds`, within limits. Returns null
+    // when no key is held and the camera has come to rest.
+    step({ radius, phi, theta }, held, seconds, { minDistance, maxDistance, maxPolarAngle }) {
+      const push = { theta: 0, phi: 0, zoom: 0 };
+      for (const code of held) {
+        const action = KEY_ACTIONS[code];
+        if (action) push[action[0]] += action[1];
+      }
+      const goal = { theta: push.theta * TURN_SPEED, phi: push.phi * TILT_SPEED, zoom: push.zoom * ZOOM_SPEED };
+      if (Object.keys(goal).every((axis) => !goal[axis] && Math.abs(speed[axis]) < REST)) {
+        stop();
+        return null;
+      }
+      // The exact distance covered while the speed closes on its goal, so the
+      // movement is the same at any frame rate.
+      const move = {};
+      for (const axis of Object.keys(goal)) {
+        const rate = goal[axis] ? SPEED_UP : SLOW_DOWN;
+        const left = Math.exp(-rate * seconds);
+        move[axis] = goal[axis] * seconds + (speed[axis] - goal[axis]) * (1 - left) / rate;
+        speed[axis] = goal[axis] + (speed[axis] - goal[axis]) * left;
+      }
+      const tilt = clamp(phi + move.phi, MIN_TILT, maxPolarAngle);
+      const distance = clamp(radius * Math.exp(move.zoom), minDistance, maxDistance);
+      // No speed is stored up against a limit.
+      if (tilt !== phi + move.phi) speed.phi = 0;
+      if (distance !== radius * Math.exp(move.zoom)) speed.zoom = 0;
+      return { theta: theta + move.theta, phi: tilt, radius: distance };
+    },
   };
 }
 

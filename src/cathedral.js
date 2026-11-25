@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { lancetGlass, roseGlass, shaftTexture } from './textures.js';
 import { stoneMaterial } from './stoneMaterial.js';
+import { createFallingStone } from './fallingStone.js';
 import { withAbyss } from './abyssFog.js';
 
 // The level heights are measured from. There is no floor there.
@@ -240,7 +241,9 @@ function vaultPlacements() {
 function endAndAisleWindows() {
   const tall = [];
   const low = [];
-  for (const x of [-9.5, -4.75, 0, 4.75, 9.5]) tall.push({ x, y: BASE_Y + 3, z: -NAVE_END + 0.5 });
+  // The five under the great rose sit low enough to leave stone between their
+  // points and its ring.
+  for (const x of [-9.5, -4.75, 0, 4.75, 9.5]) tall.push({ x, y: BASE_Y + 0.5, z: -NAVE_END + 0.5 });
   for (const x of [-8, 0, 8]) tall.push({ x, y: BASE_Y + 8, z: NAVE_END - 0.5, turn: Math.PI, scale: [1.35, 1.7] });
   for (const s of [-1, 1]) {
     for (const z of [-8, 0, 8]) {
@@ -302,7 +305,7 @@ export function addCathedral(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  const stone = stoneMaterial({ color: 0xc6bbae });
+  const stone = stoneMaterial({ color: 0x504a4c });
   const dark = withAbyss(new THREE.MeshBasicMaterial({ color: 0x07050a }));
 
   group.add(
@@ -371,7 +374,17 @@ export function addCathedral(scene) {
 
   const shafts = addLightShafts(group);
 
+  const rubble = createFallingStone(stone);
+  group.add(rubble.group);
+
+  // The stone costs the most to shade, so it is drawn after everything in
+  // front of it: whatever is hidden is then never shaded at all.
+  group.traverse((object) => {
+    if (object.material === stone) object.renderOrder = 1;
+  });
+
   return {
+    update(seconds) { rubble.update(seconds); },
     // Dropped on slow machines.
     setShafts(visible) { shafts.visible = visible; },
   };

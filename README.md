@@ -36,22 +36,26 @@ A variable already set in your system environment takes priority over `.env`. `.
 
 - Click a piece, then a highlighted square. Green dots are moves, red rings are captures.
 - Drag to rotate, scroll to zoom, right-drag to pan. You can tilt low enough to look over the rim into the drop; panning stops a short way from the board, so the camera never goes under the rock or leaves the building.
-- Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored while a dialog is open or you are typing.
+- Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving; the camera eases up to speed and glides to a stop when you let go. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored while a dialog is open or you are typing.
 - **Flip board** swaps sides; **Turn board after each move** does it automatically.
+
+## Loading
+
+A loading screen covers the first few seconds. Behind it the game builds its textures, compiles every shader, draws the whole scene once (including what the camera cannot see yet), prepares the capture effects, and settles the graphics quality. It lifts when frames arrive steadily, after at least 2.5 seconds.
 
 ## The setting
 
 - **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. It has no floor: the piers and walls run on down into a chasm and fade into black, with drifting dust and a faint cold haze. Hold S, or drag downward, for a low angle that looks up the nave.
-- **The stonework** does not visibly repeat. Two differently laid walls with uneven courses are mapped by position, shifted on every pier and bay, blended together and weathered with soot and damp on a much larger scale than any block.
-- **The rock pillar** is all that holds up the board: one craggy spire with a dais carved from its top, a broken rim, four spurs for the candle stands and two ledges for captured pieces. It is a single mesh with a single material.
+- **The stonework** is one plain colour with a soft polish and no texture, so nothing can repeat. Coloured light from the stained glass and warm candlelight near the board give every shaft and moulding a lit side and a shaded one. The building is coming apart: jagged cracks run through it in patches, flakes have broken from its face, and lumps of masonry tumble past the far walls into the chasm.
+- **The rock pillar** is all that holds up the board. Its flat top is one slab of polished black marble with smoky, white and gold veins, inlaid with brass and pale stone, with a cut block that seats the board. It is painted as a single piece, so nothing on it repeats. Below are matte black boulders stacked down into the dark.
 - **Candles** have shader-drawn flames. Each stand's light flickers with the same noise as its flames.
 - **The board** keeps its marble squares, set in a carved stone frame seated on the dais.
 
 ## Animations
 
-- **Capture:** the piece is crushed, shatters, sinks into the board, and gathers itself again on the rock ledge on the captor's side.
+- **Capture:** the piece is crushed, shatters, sinks into the board, and gathers itself again on the rock beside the board, on the captor's side.
 - **Promotion:** the pawn cracks and sinks, then the new piece is built from fragments rising out of the square.
-- **Take back:** the move plays in reverse, including the rook when castling, and captured pieces return from the ledges. In review, stepping back one move does the same; longer jumps are instant. Extra clicks while it runs are ignored.
+- **Take back:** the move plays in reverse, including the rook when castling, and captured pieces return from beside the board. In review, stepping back one move does the same; longer jumps are instant. Extra clicks while it runs are ignored.
 - **Best-move arrow:** knight moves are drawn as an L, long leg first.
 
 If your system asks for **reduced motion**, shattering, promotion and take-back become short fades and quick slides without hops.
@@ -64,7 +68,9 @@ The controls are at the bottom of the panel. **Mute sound** and the volume slide
 
 ## Performance
 
-Repeated parts of the building are instanced. The game measures its frame times and, if they stay slow, steps down in stages: lower resolution and smaller shadows, then no light shafts, then no shadows. Add `?quality=high` or `?quality=low` to the address to fix the level.
+Repeated parts of the building are instanced, and the board squares and coordinates are merged into a few meshes. The number of pixels drawn is capped by the size of the window, so a large window on a high-density screen does not swamp a modest graphics chip. Shadows are redrawn only while something that casts one is moving. The cathedral is shaded last, and its shader skips lamps that cannot reach it.
+
+The game also measures its frame times and, if they stay slow, steps down in stages: lower resolution and smaller shadows, then no light shafts or drifting dust, then a lower resolution still. Add `?quality=high` or `?quality=low` to the address to fix the level.
 
 ## The Inquisition (game review)
 
@@ -152,7 +158,7 @@ Not covered:
 | `src/pieces.js` | Gothic piece models |
 | `src/scene.js` | Lighting, camera, board squares, candle stands, highlights, best-move arrow |
 | `src/cathedral.js`, `src/frame.js`, `src/textures.js` | The building, the stone board surround, procedural textures |
-| `src/stoneMaterial.js`, `src/stoneLayout.js` | The stone shader and how its walls are coursed |
+| `src/stoneMaterial.js`, `src/fallingStone.js` | The cathedral's plain cracked stone and its light, and the falling masonry |
 | `src/pillar.js`, `src/pillarShape.js` | The rock pillar, its outline and where captured pieces stand |
 | `src/abyssFog.js`, `src/abyssAir.js` | The darkness below the board, dust and haze |
 | `src/candelabrum.js`, `src/candles.js` | The wrought-iron stands and their used candles |
@@ -160,6 +166,7 @@ Not covered:
 | `src/effects/` | Flames, fracture, dissolve and shatter effects, animation timeline, knight arrow outline |
 | `src/audio.js`, `src/music.js` | Synthesised sound effects and reverb; background music |
 | `src/quality.js` | Frame-time check that lowers detail on slow machines |
+| `src/renderBudget.js` | The pixel cap and when shadows are redrawn |
 | `src/main.js` | Input, animation, side panel |
 | `src/reviewMode.js` | Review mode: stepping, ratings, eval bar, commentary |
 | `src/importDialog.js` | Import by username |

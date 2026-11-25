@@ -1,13 +1,39 @@
-// Cathedral stone that does not visibly repeat. It is mapped by world position
-// (no UVs), shifted differently on every instance, blends two differently built
-// walls, and is weathered by large-scale noise whose period has nothing to do
-// with the texture's.
+// The cathedral's stone: one plain colour with a soft polish, like the slab the
+// board stands on. What keeps it alive is light. Coloured light spills from the
+// stained glass and warm light rises near the board, so every shaft and moulding
+// has a lit side and a shaded one. The building is also falling apart: cracks
+// run through it in patches, and flakes have broken from its face. The cracks
+// are laid at two sizes and shifted on every pier and bay, so they do not repeat
+// to the eye.
 import * as THREE from 'three';
-import { stoneWall, noiseTexture } from './textures.js';
+import { noiseTexture, crackTexture } from './textures.js';
 import { addAbyssFog } from './abyssFog.js';
 
-// World units covered by one stone texture.
-const TILE = 17;
+// How bright all the painted light is, against the cathedral's dark stone.
+const POOL_POWER = 3.2;
+
+// Pools of light painted by the shader, which costs far less than real lamps:
+// [x, y, z, reach, colour, strength].
+const WARM = 0xffa755;
+const ROSE = 0xc9466e;
+const BLUE = 0x5478e8;
+const VIOLET = 0x9461e0;
+const POOLS = [
+  // Beneath the clerestory windows along the nave, either side of the crossing.
+  [12, 24, 21, 20, WARM, 0.9], [-12, 22, 22, 20, BLUE, 1.0],
+  [12, 22, -22, 20, VIOLET, 1.0], [-12, 24, -21, 20, ROSE, 0.9],
+  // Along the transepts.
+  [23, 17, 11, 17, ROSE, 0.8], [23, 20, -11, 17, BLUE, 0.9],
+  [-23, 20, 11, 17, VIOLET, 0.9], [-23, 17, -11, 17, WARM, 0.8],
+  // Between the tall windows on the two end walls of the transepts.
+  [30, 17, 4.2, 12, WARM, 1.1], [30, 8, -4.2, 12, BLUE, 1.2],
+  [-30, 17, -4.2, 12, ROSE, 1.1], [-30, 8, 4.2, 12, VIOLET, 1.2],
+  // Under the great rose.
+  [0, 23, -45, 24, VIOLET, 1.1],
+  // Candlelight reaching the four piers round the board.
+  [11, 3, 11, 13, WARM, 0.85], [-11, 3, 11, 13, WARM, 0.85],
+  [11, 3, -11, 13, WARM, 0.85], [-11, 3, -11, 13, WARM, 0.85],
+];
 
 const VERTEX_HEAD = /* glsl */ `
   varying vec3 vStonePos;
@@ -19,111 +45,144 @@ const VERTEX_BODY = /* glsl */ `
   vec4 stoneAt = vec4(transformed, 1.0);
   vec3 stoneNormal = objectNormal;
   vStoneShift = vec2(0.0);
+  vec3 stoneSpace = vec3(0.0);
   #ifdef USE_INSTANCING
     stoneAt = instanceMatrix * stoneAt;
     stoneNormal = mat3(instanceMatrix) * stoneNormal;
-    // Every pier and wall bay starts at its own place in the texture.
-    vec3 origin = instanceMatrix[3].xyz;
-    vStoneShift = fract(sin(vec2(dot(origin, vec3(12.9, 78.2, 37.7)), dot(origin, vec3(93.9, 11.3, 47.1)))) * 43758.5453);
+    // Every pier and wall bay cracks in its own way.
+    stoneSpace = instanceMatrix[3].xyz;
+    vStoneShift = fract(sin(vec2(dot(stoneSpace, vec3(12.9, 78.2, 37.7)), dot(stoneSpace, vec3(93.9, 11.3, 47.1)))) * 43758.5453);
   #endif
   vStonePos = (modelMatrix * stoneAt).xyz;
   vStoneNormal = normalize(mat3(modelMatrix) * stoneNormal);
 `;
 
 const FRAGMENT_HEAD = /* glsl */ `
-  uniform sampler2D uWallA;
-  uniform sampler2D uWallB;
-  uniform sampler2D uReliefA;
-  uniform sampler2D uReliefB;
   uniform sampler2D uNoise;
+  uniform sampler2D uCracks;
+  uniform vec4 uPoolAt[${POOLS.length}];
+  uniform vec3 uPoolColour[${POOLS.length}];
   varying vec3 vStonePos;
   varying vec3 vStoneNormal;
   varying vec2 vStoneShift;
 
-  // Smooth noise looked up along a slanted slice through space.
-  vec3 stoneNoise(vec3 p, float scale) {
-    vec3 a = texture2D(uNoise, vec2(p.x + p.y * 0.37, p.z - p.y * 0.61) * scale).rgb;
-    vec3 b = texture2D(uNoise, vec2(p.y - p.z * 0.29, p.x * 0.53 + p.z * 0.81) * scale * 1.37 + 0.43).rgb;
-    return (a + b) * 0.5;
+  // How cracked a point of the face is. \`at\` is its place seen from the side it
+  // mostly faces, and \`drop\` looks a little higher or lower on upright faces.
+  float stoneCracks(vec2 at, vec2 shift, float tile, vec2 drop) {
+    return texture2D(uCracks, (at + drop) / tile + shift).r;
   }
 `;
 
-// Replaces the colour lookup. The names declared here are used again below.
+// The colour stays one colour, only drifting a little in depth over distances
+// far larger than any detail, so that no wall looks like a flat cut-out.
 const FRAGMENT_COLOUR = /* glsl */ `
-  vec3 faceNormal = normalize(vStoneNormal);
-  vec3 blend = pow(abs(faceNormal), vec3(8.0));
-  blend /= blend.x + blend.y + blend.z;
-  vec2 shift = vStoneShift;
-  vec2 uvX = vStonePos.zy / ${TILE.toFixed(1)} + shift + vec2(0.37, 0.0);
-  vec2 uvY = vStonePos.xz / ${TILE.toFixed(1)} + shift.yx;
-  vec2 uvZ = vStonePos.xy / ${TILE.toFixed(1)} + shift;
-
-  // Which of the two walls shows here.
-  vec3 patches = stoneNoise(vStonePos, 0.0135);
-  float variant = smoothstep(0.47, 0.53, patches.r);
-
-  vec3 wall = mix(
-    texture2D(uWallA, uvX).rgb * blend.x + texture2D(uWallA, uvY).rgb * blend.y + texture2D(uWallA, uvZ).rgb * blend.z,
-    texture2D(uWallB, uvX).rgb * blend.x + texture2D(uWallB, uvY).rgb * blend.y + texture2D(uWallB, uvZ).rgb * blend.z,
-    variant);
-
-  // Weathering on a much larger scale than any block.
-  vec3 broad = stoneNoise(vStonePos + 31.0, 0.0071);
-  vec3 streaks = stoneNoise(vStonePos * vec3(2.6, 0.45, 2.6) + 77.0, 0.012);
-  float soot = smoothstep(0.52, 0.74, patches.g);
-  float damp = smoothstep(0.54, 0.76, streaks.b);
-  wall *= mix(vec3(1.1, 1.0, 0.88), vec3(0.9, 0.96, 1.09), smoothstep(0.35, 0.65, broad.r));
-  wall *= 0.8 + 0.42 * broad.g;
-  wall *= mix(vec3(1.0), vec3(0.42, 0.4, 0.4), soot);
-  wall = mix(wall, wall * vec3(0.6, 0.68, 0.55), damp * 0.8);
+  vec2 drift = vec2(vStonePos.x + vStonePos.y * 0.37, vStonePos.z - vStonePos.y * 0.61);
+  float broad = texture2D(uNoise, drift * 0.011).r;
+  diffuseColor.rgb *= 0.82 + 0.36 * broad;
   // Candle smoke has darkened everything high up.
-  wall *= 1.0 - 0.62 * smoothstep(11.0, 40.0, vStonePos.y);
-  diffuseColor.rgb *= wall;
+  diffuseColor.rgb *= 1.0 - 0.5 * smoothstep(12.0, 40.0, vStonePos.y);
+
+  // One lookup from the side the face mostly looks to, with height as the
+  // second coordinate on anything upright.
+  vec3 facingBy = abs(vStoneNormal);
+  bool level = facingBy.y > max(facingBy.x, facingBy.z);
+  vec2 onFace = level ? vStonePos.xz : (facingBy.x > facingBy.z ? vStonePos.zy : vStonePos.xy);
+  vec2 up = level ? vec2(0.0) : vec2(0.0, 1.0);
+  // Damage comes in patches, with sound stone in between.
+  vec2 patchAt = vec2(vStonePos.x * 0.8 + vStonePos.z * 0.6, vStonePos.y + vStonePos.x * 0.23);
+  vec3 wear = texture2D(uNoise, patchAt * 0.019 + 0.31).rgb;
+  float wide = smoothstep(0.42, 0.56, wear.g);
+  float fine = smoothstep(0.46, 0.62, wear.b);
+  // Great splits, and a web of finer ones at a size unrelated to theirs.
+  vec2 webShift = vStoneShift * 1.7 + 0.53;
+  float split = max(
+    stoneCracks(onFace, vStoneShift, 15.0, vec2(0.0)) * wide,
+    stoneCracks(onFace, webShift, 6.3, vec2(0.0)) * fine * 0.8);
+  // The lower edge of a split catches the light: it is where the stone a little
+  // above is split and this point is not.
+  float lip = max(
+    stoneCracks(onFace, vStoneShift, 15.0, up * 0.07) * wide,
+    stoneCracks(onFace, webShift, 6.3, up * 0.05) * fine * 0.8);
+  lip = clamp(lip - split, 0.0, 1.0);
+
+  // Flakes broken from the face: rougher, darker hollows with a sharp edge.
+  vec3 pits = texture2D(uNoise, patchAt * 0.085 + 0.62).rgb;
+  float ragged = pits.r + (texture2D(uNoise, patchAt * 0.31).g - 0.5) * 0.34;
+  float flake = smoothstep(0.668, 0.682, ragged) * smoothstep(0.45, 0.6, wear.r);
+  float rim = clamp(smoothstep(0.645, 0.668, ragged) * smoothstep(0.45, 0.6, wear.r) - flake, 0.0, 1.0);
+
+  float broken = clamp(split * 1.25, 0.0, 1.0);
+  diffuseColor.rgb *= 1.0 - 0.86 * broken;
+  diffuseColor.rgb *= 1.0 - 0.28 * flake;
+  diffuseColor.rgb *= 1.0 + 1.1 * lip + 0.85 * rim;
 `;
 
-const FRAGMENT_RELIEF = /* glsl */ `
-  vec3 tnX = mix(texture2D(uReliefA, uvX).xyz, texture2D(uReliefB, uvX).xyz, variant) * 2.0 - 1.0;
-  vec3 tnY = mix(texture2D(uReliefA, uvY).xyz, texture2D(uReliefB, uvY).xyz, variant) * 2.0 - 1.0;
-  vec3 tnZ = mix(texture2D(uReliefA, uvZ).xyz, texture2D(uReliefB, uvZ).xyz, variant) * 2.0 - 1.0;
-  // Each projection tilts the surface within its own plane.
-  vec3 bumped = faceNormal
-    + 0.9 * (vec3(0.0, tnX.y, tnX.x) * blend.x
-    + vec3(tnY.x, 0.0, tnY.y) * blend.y
-    + vec3(tnZ.x, tnZ.y, 0.0) * blend.z);
-  normal = normalize((viewMatrix * vec4(normalize(bumped), 0.0)).xyz);
-  #ifdef DOUBLE_SIDED
-    normal *= gl_FrontFacing ? 1.0 : -1.0;
-  #endif
+const FRAGMENT_LIGHT = /* glsl */ `
+  {
+    vec3 faceNormal = normalize(vStoneNormal);
+    #ifdef DOUBLE_SIDED
+      faceNormal *= gl_FrontFacing ? 1.0 : -1.0;
+    #endif
+    // Undersides get less of the light from above than ledges do.
+    float openness = 0.55 + 0.45 * smoothstep(-0.9, 0.7, faceNormal.y);
+    reflectedLight.directDiffuse *= openness;
+    reflectedLight.indirectDiffuse *= openness;
+
+    vec3 spill = vec3(0.0);
+    for (int i = 0; i < ${POOLS.length}; i++) {
+      vec3 toward = uPoolAt[i].xyz - vStonePos;
+      float away = length(toward);
+      float fall = max(0.0, 1.0 - away / uPoolAt[i].w);
+      // Light wraps a little past the edge, then leaves the far side in shade.
+      float facing = max(0.0, (dot(faceNormal, toward / away) + 0.15) / 1.15);
+      spill += uPoolColour[i] * (fall * fall * facing);
+    }
+    reflectedLight.directDiffuse += spill * diffuseColor.rgb;
+
+    // Nothing gleams from inside a crack or a hollow.
+    float dull = (1.0 - broken) * (1.0 - 0.7 * flake);
+    reflectedLight.directSpecular *= dull;
+    reflectedLight.indirectSpecular *= dull;
+  }
 `;
+
+// The candle lamps and the lamp over the board do not reach the walls, which
+// have the painted light instead, so the stone's shader leaves them out.
+const without = (source, loop) => {
+  if (!source.includes(loop)) throw new Error(`three.js lighting code has changed: ${loop}`);
+  return source.replace(loop, '#if 0');
+};
+const DISTANT_LIGHTS = ['POINT', 'SPOT'].reduce(
+  (source, kind) => without(source, `#if ( NUM_${kind}_LIGHTS > 0 ) && defined( RE_Direct )`),
+  THREE.ShaderChunk.lights_fragment_begin,
+);
 
 let shared = null;
 
-function textures() {
-  if (!shared) {
-    const a = stoneWall(11);
-    const b = stoneWall(47);
-    shared = {
-      uWallA: { value: a.map }, uWallB: { value: b.map },
-      uReliefA: { value: a.normalMap }, uReliefB: { value: b.normalMap },
-      uNoise: { value: noiseTexture() },
-    };
-  }
+function uniforms() {
+  shared ||= {
+    uNoise: { value: noiseTexture() },
+    uCracks: { value: crackTexture(131) },
+    uPoolAt: { value: POOLS.map(([x, y, z, reach]) => new THREE.Vector4(x, y, z, reach)) },
+    uPoolColour: {
+      value: POOLS.map(([, , , , colour, strength]) => new THREE.Color(colour).multiplyScalar(strength * POOL_POWER)),
+    },
+  };
   return shared;
 }
 
-// Matte stone: no specular highlight and no reflection, so nothing reads as metal.
 export function stoneMaterial({ color = 0xffffff } = {}) {
-  const material = new THREE.MeshLambertMaterial({ color, reflectivity: 0 });
-  const uniforms = textures();
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.52, metalness: 0.08 });
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
+    Object.assign(shader.uniforms, uniforms());
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${VERTEX_HEAD}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERTEX_BODY}`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAGMENT_HEAD}`)
       .replace('#include <map_fragment>', FRAGMENT_COLOUR)
-      .replace('#include <normal_fragment_maps>', FRAGMENT_RELIEF);
+      .replace('#include <lights_fragment_begin>', DISTANT_LIGHTS)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAGMENT_LIGHT}`);
     addAbyssFog(shader);
   };
   material.customProgramCacheKey = () => 'cathedral-stone';
