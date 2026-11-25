@@ -7,6 +7,7 @@ import { createScene, createHighlights, createBestMoveArrow, squarePosition } fr
 import { createBoardView } from './boardView.js';
 import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
+import { createKeyTracker, steerCamera } from './keyCamera.js';
 import { openImportDialog } from './importDialog.js';
 
 const NAMES = { w: 'White', b: 'Black' };
@@ -97,6 +98,18 @@ function turnCamera(side) {
       .add(controls.target);
     camera.lookAt(controls.target);
   }).then(() => { controls.enabled = true; });
+}
+
+const cameraKeys = createKeyTracker(window, () => $('dialog').open);
+
+function steerFromKeys(seconds) {
+  if (!cameraKeys.size) return;
+  cameraMoved = true;
+  const offset = camera.position.clone().sub(controls.target);
+  const next = steerCamera(new THREE.Spherical().setFromVector3(offset), cameraKeys, seconds, controls);
+  camera.position
+    .setFromSpherical(new THREE.Spherical(next.radius, next.phi, next.theta))
+    .add(controls.target);
 }
 
 function resize() {
@@ -557,7 +570,11 @@ renderer.setAnimationLoop((now) => {
   lastFrame = now;
   runTweens(performance.now());
   boardView.update(elapsed / 1000);
-  if (controls.enabled) controls.update();
+  if (controls.enabled) {
+    // A long gap between frames must not fling the camera.
+    steerFromKeys(Math.min(elapsed, 50) / 1000);
+    controls.update();
+  }
   update(now / 1000, elapsed);
   highlights.pulse(now / 1000);
   bestArrow.pulse(now / 1000);
@@ -567,6 +584,10 @@ renderer.setAnimationLoop((now) => {
 resize();
 syncPieces();
 render();
+// After the first frames, get the capture effects ready.
+const prepared = new Promise((resolve) => setTimeout(resolve, 150))
+  .then(() => boardView.prepare(renderer, camera))
+  .catch((error) => console.warn('Effects could not be prepared early:', error));
 
 // Development-only handle for driving the board from the console.
 if (import.meta.env.DEV) {
@@ -578,6 +599,9 @@ if (import.meta.env.DEV) {
     boardMatches: (state, history) => boardView.matches(state, history),
     boardView,
     audio,
+    renderer,
+    renderNow: () => renderer.render(scene, camera),
+    prepared: () => prepared,
     move: (from, to) => makeMove(from, to),
     reduceMotion: (value) => { forceReducedMotion = value; },
     // Screen position of a square, for simulating real clicks.

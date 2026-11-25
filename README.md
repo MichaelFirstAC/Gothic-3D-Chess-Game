@@ -36,11 +36,12 @@ A variable already set in your system environment takes priority over `.env`. `.
 
 - Click a piece, then a highlighted square. Green dots are moves, red rings are captures.
 - Drag to rotate, scroll to zoom, right-drag to pan.
+- Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored while a dialog is open or you are typing.
 - **Flip board** swaps sides; **Turn board after each move** does it automatically.
 
 ## The setting
 
-- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. Drag downward to a low angle to look up the nave. At low angles the view shifts upward, so the height shows while the verticals stay upright.
+- **The cathedral** is a High Gothic interior after Cologne Cathedral, with the board at the crossing: clustered piers, pointed arcades, a triforium, a tall clerestory, ribbed vaults, a rose window and shafts of coloured light. Hold S, or drag downward, for a low angle that looks up the nave. At low angles the view shifts upward, so the height shows while the verticals stay upright.
 - **Candles** have shader-drawn flames. Each stand's light flickers with the same noise as its flames.
 - **The board** keeps its marble squares, set in a carved stone frame on a chipped limestone plinth.
 

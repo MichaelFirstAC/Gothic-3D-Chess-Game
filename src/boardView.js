@@ -5,6 +5,8 @@ import { colorOf } from './engine.js';
 import { squarePosition } from './scene.js';
 import { createTimeline, easeInOut, phase } from './effects/timeline.js';
 import { createShatter } from './effects/shatter.js';
+import { fracturePiece } from './effects/fracture.js';
+import { contactFraction } from './effects/impact.js';
 
 const isCastle = (move) => move.flag === 'castle-short' || move.flag === 'castle-long';
 
@@ -128,8 +130,10 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
     if (victim) {
       const key = graveyardSlots(history).filter((s) => s.key[0] === colorOf(move.piece)).at(-1).key;
       const grave = graveyard.children.find((mesh) => mesh.userData.key === key);
-      // The victim breaks as the attacker comes down on it.
-      settled = shatter.capture({ victim, grave, delay: duration * 0.68 });
+      // The victim starts to give way just before the attacker touches it.
+      const distance = squarePosition(move.from).distanceTo(squarePosition(move.to));
+      const contact = duration * contactFraction(distance, move.piece.toLowerCase() === 'n');
+      settled = shatter.capture({ victim, grave, delay: Math.max(0, contact - 0.03) });
     }
 
     const jobs = [slide(mover, move.to, hopFor(move.piece), duration)];
@@ -203,8 +207,29 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
     await Promise.all(jobs);
   }
 
+  // Does the slow work of the first effect while nothing is happening: compiles
+  // its shaders, then cuts each kind of piece into fragments.
+  async function prepare(renderer, camera) {
+    const warm = shatter.warmUpObjects([makePiece('Q'), makePiece('q')]);
+    scene.add(warm.group);
+    try {
+      await renderer.compileAsync(warm.group, camera, scene);
+      // Some drivers finish a shader only when it is first drawn.
+      renderer.render(scene, camera);
+      warm.done();
+    } finally {
+      scene.remove(warm.group);
+    }
+    for (const letter of 'PpNnBbRrQqKk') {
+      await new Promise((resolve) => (window.requestIdleCallback
+        ? window.requestIdleCallback(resolve, { timeout: 200 }) : setTimeout(resolve, 30)));
+      fracturePiece(makePiece(letter));
+    }
+  }
+
   return {
     pieces,
+    prepare,
     sync,
     refreshGraveyard,
     animateMove,

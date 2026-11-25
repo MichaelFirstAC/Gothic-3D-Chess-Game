@@ -45,7 +45,12 @@ function patch(material, uniforms) {
   material.customProgramCacheKey = () => 'dissolve';
 }
 
-export function createDissolve(materials, { edge = 0xffa23a, doubleSided = true } = {}) {
+// Sets of copies waiting to be used again. They are never disposed: disposing
+// the last material using a shader throws the compiled shader away, and
+// compiling it again freezes the picture for a noticeable moment.
+const spare = new Map(); // which originals and which side -> sets
+
+function buildSet(materials, edge, doubleSided) {
   const uniforms = {
     uDissolve: { value: 0 }, uGlow: { value: 0 }, uClipY: { value: -1000 }, uEdge: { value: new THREE.Color(edge) },
   };
@@ -56,6 +61,15 @@ export function createDissolve(materials, { edge = 0xffa23a, doubleSided = true 
     patch(copy, uniforms);
     return copy;
   });
+  return { uniforms, copies };
+}
+
+export function createDissolve(materials, { edge = 0xffa23a, doubleSided = true } = {}) {
+  const key = [edge, doubleSided, ...materials.map((m) => m.uuid)].join();
+  if (!spare.has(key)) spare.set(key, []);
+  const set = spare.get(key).pop() || buildSet(materials, edge, doubleSided);
+  const { uniforms, copies } = set;
+  let released = false;
   return {
     materials: copies,
     set amount(value) { uniforms.uDissolve.value = value; },
@@ -71,8 +85,21 @@ export function createDissolve(materials, { edge = 0xffa23a, doubleSided = true 
         copy.opacity = value;
       }
     },
-    dispose() {
-      for (const copy of copies) copy.dispose();
+    // Resets the set and puts it back for the next effect.
+    release() {
+      if (released) return;
+      released = true;
+      uniforms.uDissolve.value = 0;
+      uniforms.uGlow.value = 0;
+      uniforms.uClipY.value = -1000;
+      copies.forEach((copy, i) => {
+        copy.opacity = materials[i].opacity;
+        if (copy.transparent !== materials[i].transparent) {
+          copy.transparent = materials[i].transparent;
+          copy.needsUpdate = true;
+        }
+      });
+      spare.get(key).push(set);
     },
   };
 }

@@ -16,8 +16,22 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
   let spark = null;
   const sparkMap = () => (spark ||= glowTexture(64));
 
+  const dustLook = () => new THREE.PointsMaterial({
+    map: sparkMap(), color: 0xa2937c, size: 0.26, transparent: true, opacity: 0, depthWrite: false,
+  });
+  const flashLook = () => new THREE.SpriteMaterial({
+    map: sparkMap(), color: 0xffc36b, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  // One of each is drawn at warm-up and kept for good, which keeps their shaders.
+  let keepers = null;
+
   // The materials of a piece in mesh order, which chunk groups refer to.
   const materialsOf = (piece) => piece.children.map((mesh) => mesh.material);
+
+  // Freeing a material is safe for its shader only while a keeper still uses it.
+  const releaseLater = (material) => {
+    if (keepers) material.dispose();
+  };
 
   // Runs `step` on a timeline entry, with one bag that is emptied at the end.
   function play(duration, build) {
@@ -36,7 +50,7 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
 
   function dissolveFor(piece, keep, options) {
     const dissolve = createDissolve(materialsOf(piece), options);
-    keep(() => dissolve.dispose());
+    keep(() => dissolve.release());
     return dissolve;
   }
 
@@ -79,9 +93,7 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
     });
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
-      map: sparkMap(), color: 0xa2937c, size: 0.26, transparent: true, opacity: 0, depthWrite: false,
-    });
+    const material = dustLook();
     const points = new THREE.Points(geometry, material);
     points.visible = false;
     points.frustumCulled = false;
@@ -89,7 +101,7 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
     keep(() => {
       effectsGroup.remove(points);
       geometry.dispose();
-      material.dispose();
+      releaseLater(material);
     });
     return (age, dt) => {
       points.visible = age >= 0 && age < 0.9;
@@ -166,6 +178,46 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
   }
 
   return {
+    // Everything an effect will draw, so the shaders can be compiled before the
+    // first capture. `samples` are one piece of each colour. The objects are
+    // invisible; call done() once they have been drawn.
+    warmUpObjects(samples) {
+      const group = new THREE.Group();
+      const sets = [];
+      for (const piece of samples) {
+        for (const doubleSided of [true, false]) {
+          const dissolve = createDissolve(materialsOf(piece), { doubleSided });
+          if (reduced()) dissolve.opacity = 0;
+          // Every pixel is discarded, so nothing shows.
+          dissolve.clipY = 1e6;
+          sets.push(dissolve);
+          piece.children.forEach((mesh, i) => {
+            const copy = new THREE.Mesh(mesh.geometry, dissolve.materials[i]);
+            copy.frustumCulled = false;
+            copy.castShadow = true;
+            group.add(copy);
+          });
+        }
+      }
+      const kept = { dust: dustLook(), flash: flashLook() };
+      const point = new THREE.BufferGeometry()
+        .setAttribute('position', new THREE.Float32BufferAttribute([0, -50, 0], 3));
+      const points = new THREE.Points(point, kept.dust);
+      const sprite = new THREE.Sprite(kept.flash);
+      kept.flash.opacity = 0;
+      sprite.position.y = -50;
+      for (const object of [points, sprite]) object.frustumCulled = false;
+      group.add(points, sprite);
+      return {
+        group,
+        done() {
+          for (const dissolve of sets) dissolve.release();
+          point.dispose();
+          keepers = kept;
+        },
+      };
+    },
+
     // The victim is crushed, bursts apart, and is swallowed by the board, while
     // `grave` (its final mesh beside the board) gathers itself out of the air.
     // `delay` is the time until the attacker lands, in seconds.
@@ -188,7 +240,7 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
           };
         });
       }
-      const CRUSH = 0.14;
+      const CRUSH = 0.07;
       const SINK = 0.85;
       const END = 1.45;
       return play(delay + END, (keep) => {
@@ -329,14 +381,12 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
                 if (p === 1 && !part.snapped) {
                   part.snapped = true;
                   // A small flash as it locks.
-                  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
-                    map: sparkMap(), color: 0xffc36b, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-                  }));
+                  const flash = new THREE.Sprite(flashLook());
                   flash.position.copy(part.home);
                   effectsGroup.add(flash);
                   keep(() => {
                     effectsGroup.remove(flash);
-                    flash.material.dispose();
+                    releaseLater(flash.material);
                   });
                   flashes.push({ flash, born: t });
                 }
