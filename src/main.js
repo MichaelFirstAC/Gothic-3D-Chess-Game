@@ -1,10 +1,11 @@
 // Connects the rules engine to the 3D board and the side panel.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Game, inCheck, colorOf, squareName } from './engine.js';
+import { Game, inCheck, colorOf, squareName, applyMove, legalMoves } from './engine.js';
 import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
 import { createBoardView } from './boardView.js';
+import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
 import { openImportDialog } from './importDialog.js';
 
@@ -30,8 +31,9 @@ let busy = false; // true while a piece is moving or a promotion is being chosen
 
 const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let forceReducedMotion = false; // development aid
+const audio = createAudio();
 const boardView = createBoardView({
-  scene, makePiece, reducedMotion: () => motion.matches || forceReducedMotion,
+  scene, makePiece, sound: (name) => audio.play(name), reducedMotion: () => motion.matches || forceReducedMotion,
 });
 
 const syncPieces = (state = game.state, history = game.history) => boardView.sync(state, history);
@@ -243,7 +245,13 @@ async function announceResult() {
 
 const review = createReviewMode({
   sync: syncPieces,
-  animate: (move, history) => boardView.animateMove(move, history),
+  async animate(move, history) {
+    const version = boardView.version;
+    await boardView.animateMove(move, history);
+    if (version !== boardView.version) return;
+    const after = applyMove(history.at(-1).state, move);
+    if (inCheck(after)) audio.play(legalMoves(after).length ? 'check' : 'checkmate');
+  },
   unanimate: (entry, history) => boardView.animateUndo(entry, history),
   mark: (marks) => highlights.show(marks),
   arrow: (move) => bestArrow.show(move),
@@ -313,10 +321,16 @@ async function makeMove(from, to) {
   hovered = -1;
   render();
   const { settled } = await boardView.animateMove(move, game.history);
+  soundVerdict();
   if (!game.result && $('auto-turn').checked) await turnCamera(game.state.turn);
   busy = false;
   render();
   await announceAfter(settled);
+}
+
+function soundVerdict() {
+  if (game.result) audio.play(resultSound(game.result));
+  else if (inCheck(game.state)) audio.play('check');
 }
 
 // A game that ends on a capture waits for the pieces to settle before the dialog.
@@ -380,9 +394,18 @@ const isOwnPiece = (square) => {
 
 function handleSquare(square) {
   if (busy || review.active) return;
-  if (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)) makeMove(selected, square);
-  else if (square >= 0 && square !== selected && isOwnPiece(square)) select(square);
-  else select(-1);
+  if (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)) {
+    makeMove(selected, square);
+  } else if (square >= 0 && square !== selected && isOwnPiece(square)) {
+    audio.play('select');
+    select(square);
+  } else {
+    // A thud for trying something the rules do not allow.
+    const triedToMove = selected >= 0 && square >= 0 && square !== selected;
+    const touchedEnemy = square >= 0 && square !== selected && Boolean(game.state.board[square]) && !game.result;
+    if (triedToMove || touchedEnemy) audio.play('illegal');
+    select(-1);
+  }
 }
 
 let press = null;
@@ -442,6 +465,7 @@ $('claim').addEventListener('click', async () => {
   if (current) {
     if (!(await confirmAction('Claim draw', `Claim a draw by ${current}?`, 'Claim'))) return;
     game.claimDraw(current);
+    soundVerdict();
   } else {
     // FIDE lets a player claim by declaring the move that will qualify.
     const options = game.intendedDrawClaims();
@@ -456,6 +480,7 @@ $('claim').addEventListener('click', async () => {
     busy = true;
     render();
     const { settled } = await boardView.animateMove(move, game.history);
+    soundVerdict();
     busy = false;
     render();
     await announceAfter(settled);
@@ -472,6 +497,7 @@ $('offer').addEventListener('click', async () => {
     `${NAMES[offerer]} offers a draw. ${NAMES[offerer === 'w' ? 'b' : 'w']}, do you accept?`, 'Accept', 'Decline');
   if (!accepted) return;
   game.agreeDraw();
+  soundVerdict();
   selected = -1;
   render();
   announceResult();
@@ -481,6 +507,7 @@ $('resign').addEventListener('click', async () => {
   const loser = game.state.turn;
   if (!(await confirmAction('Resign', `${NAMES[loser]}, do you concede the game?`, 'Resign'))) return;
   game.resign(loser);
+  soundVerdict();
   selected = -1;
   render();
   announceResult();
@@ -497,6 +524,22 @@ $('import').addEventListener('click', importGame);
 $('auto-turn').addEventListener('change', (event) => {
   if (event.target.checked && controls.enabled) turnCamera(game.state.turn);
 });
+
+// ---------------------------------------------------------------- audio
+
+// Browsers only allow sound after the viewer has clicked or pressed a key.
+for (const type of ['pointerdown', 'keydown']) {
+  window.addEventListener(type, () => audio.unlock(), { capture: true });
+}
+document.addEventListener('click', (event) => {
+  if (event.target.closest?.('#panel button, #dialog button')) audio.play('click');
+});
+
+$('sound-mute').checked = audio.settings.muted;
+$('sound-volume').value = Math.round(audio.settings.volume * 100);
+$('sound-mute').addEventListener('change', (event) => audio.set({ muted: event.target.checked }));
+$('sound-volume').addEventListener('input', (event) => audio.set({ volume: event.target.value / 100 }));
+$('sound-volume').addEventListener('change', () => audio.play('place'));
 
 // ---------------------------------------------------------------- start
 
@@ -526,6 +569,7 @@ if (import.meta.env.DEV) {
     // `history`) exactly, with no strays.
     boardMatches: (state, history) => boardView.matches(state, history),
     boardView,
+    audio,
     move: (from, to) => makeMove(from, to),
     reduceMotion: (value) => { forceReducedMotion = value; },
     // Screen position of a square, for simulating real clicks.
