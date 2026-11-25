@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { canvasTexture, seededRandom } from './textures.js';
+import { candleSet, waxMaterial } from './candles.js';
+import { createFlame } from './effects/flame.js';
 
 const SIDES = 32;
 
@@ -136,6 +138,39 @@ function ironTexture() {
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(2, 3);
   return texture;
+}
+
+const PAN_RADII = [0.155, 0.078, 0.078];
+const CANDLE_HEIGHTS = [0.55, 0.36, 0.43];
+
+// Makes candelabra that share one iron and one wax material.
+export function createCandelabra(environment) {
+  const iron = ironMaterial(environment);
+  const frame = candelabrumGeometry();
+  const wax = waxMaterial();
+  const wick = new THREE.MeshBasicMaterial({ color: 0x120c08 });
+
+  return {
+    waxLight: wax.light,
+    // Returns the group to add to the scene and its three flames.
+    build(seed) {
+      const set = candleSet(SOCKETS, CANDLE_HEIGHTS, PAN_RADII, seed);
+      const group = new THREE.Group();
+      for (const [geometry, material, shadows] of [[frame, iron, true], [set.wax, wax.material, true], [set.wick, wick, false]]) {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = shadows;
+        mesh.receiveShadow = shadows;
+        group.add(mesh);
+      }
+      const flames = set.flames.map((at, i) => {
+        const flame = createFlame((seed - 1) * SOCKETS.length + i + 1);
+        flame.object.position.copy(at);
+        group.add(flame.object);
+        return flame;
+      });
+      return { group, flames };
+    },
+  };
 }
 
 export function ironMaterial(environment) {

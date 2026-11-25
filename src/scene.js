@@ -4,10 +4,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
 import { canvasTexture, marble } from './textures.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCathedral } from './cathedral.js';
-import { createFlame } from './effects/flame.js';
-import { candelabrumGeometry, ironMaterial, SOCKETS } from './candelabrum.js';
+import { createCandelabra } from './candelabrum.js';
 import { addFrame } from './frame.js';
 import { createQualityGovernor } from './quality.js';
 
@@ -77,40 +75,14 @@ function addBoard(scene, environment) {
 
 // Four iron candelabra, each carrying three candles.
 function addCandleTowers(scene, environment) {
-  const iron = ironMaterial(environment);
-  const wax = new THREE.MeshLambertMaterial({ color: 0xcfc3a4, emissive: 0x2a1c08, reflectivity: 0 });
-  const wick = new THREE.MeshBasicMaterial({ color: 0x140d08 });
-  const heights = [0.55, 0.36, 0.43];
-  const column = (radius, bottom, height, i, lift = 0) => {
-    const { x, y, z } = SOCKETS[i];
-    return new THREE.CylinderGeometry(radius, bottom, height, 16).translate(x, y + lift + height / 2, z);
-  };
-
-  const parts = [
-    [candelabrumGeometry(), iron],
-    [mergeGeometries(heights.map((h, i) => column(0.052, 0.058, h, i))), wax],
-    [mergeGeometries(heights.map((h, i) => column(0.005, 0.007, 0.045, i, h))), wick],
-  ];
-
+  const candelabra = createCandelabra(environment);
   const towers = [];
   let seed = 1;
   for (const x of [-5.7, 5.7]) {
     for (const z of [-5.7, 5.7]) {
-      const tower = new THREE.Group();
+      const { group: tower, flames } = candelabra.build(seed++);
       // The arms lie across the line to the board, so both side candles show.
       tower.rotation.y = Math.atan2(x, z);
-      for (const [geometry, material] of parts) {
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = material === iron;
-        mesh.receiveShadow = material === iron;
-        tower.add(mesh);
-      }
-      const flames = heights.map((h, i) => {
-        const flame = createFlame(seed++);
-        flame.object.position.set(SOCKETS[i].x, SOCKETS[i].y + h + 0.045, SOCKETS[i].z);
-        tower.add(flame.object);
-        return flame;
-      });
       const light = new THREE.PointLight(0xff8c2e, 9, 12, 1.8);
       light.position.set(0, 2.15, 0);
       tower.add(light);
@@ -134,6 +106,8 @@ function addCandleTowers(scene, environment) {
       }
       // Exaggerated a little, or the flicker would be lost on the stone.
       light.intensity = 9 * Math.max(0.4, 1 + (strength - 1) * 1.6);
+      // The wax glows a touch brighter and dimmer with the flames.
+      if (light === towers[0].light) candelabra.waxLight.value = 1 + (strength - 1) * 0.5;
       light.position.set(leanX * 2.5, 2.15 + (strength - 1) * 0.12, leanZ * 2.5);
     }
   };
