@@ -1,13 +1,16 @@
-// The setting: marble board, carved frame, candle towers and lighting. The
-// building around them is in cathedral.js.
+// The setting: marble board, carved frame, candle towers and lighting. The rock
+// they stand on is in pillar.js and the building around them in cathedral.js.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
-import { canvasTexture, marble } from './textures.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { canvasTexture, paintedTexture, marble } from './textures.js';
+import { pixelRatioFor } from './renderBudget.js';
 import { addCathedral } from './cathedral.js';
-import { createFlame } from './effects/flame.js';
+import { createCandelabra } from './candelabrum.js';
 import { addFrame } from './frame.js';
+import { addPillar } from './pillar.js';
+import { createAbyssAir } from './abyssAir.js';
 import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
@@ -20,6 +23,8 @@ function addBoard(scene, environment) {
   const materials = Object.fromEntries(Object.entries(textures).map(([k, map]) => [
     k, new THREE.MeshStandardMaterial({ map, roughness: 0.34, metalness: 0.12 }),
   ]));
+  // All the light squares are one mesh and all the dark ones another.
+  const tiles = { light: [], dark: [] };
   for (let sq = 0; sq < 64; sq++) {
     const light = ((sq & 7) + (sq >> 3)) % 2 === 1;
     const geometry = new THREE.BoxGeometry(1, 0.2, 1);
@@ -28,92 +33,75 @@ function addBoard(scene, environment) {
     for (let i = 0; i < uv.count; i++) {
       uv.setXY(i, (uv.getX(i) + (sq & 7)) / 8, (uv.getY(i) + (sq >> 3)) / 8);
     }
-    const tile = new THREE.Mesh(geometry, materials[light ? 'light' : 'dark']);
-    tile.position.copy(squarePosition(sq)).setY(-0.1);
-    tile.receiveShadow = true;
-    tile.userData.square = sq;
-    scene.add(tile);
+    const { x, z } = squarePosition(sq);
+    tiles[light ? 'light' : 'dark'].push(geometry.translate(x, -0.1, z));
+  }
+  for (const [shade, parts] of Object.entries(tiles)) {
+    const mesh = new THREE.Mesh(mergeGeometries(parts), materials[shade]);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
   }
 
   addFrame(scene, environment);
 
-  const label = (text) => {
-    const map = canvasTexture(128, (ctx) => {
-      ctx.font = '600 88px "EB Garamond", Georgia, serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 9;
+  // The sixteen letters and numbers are painted on one sheet, eight across.
+  const marks = [...'abcdefgh12345678'];
+  const sheet = paintedTexture(1024, 256, (ctx) => {
+    ctx.font = '600 88px "EB Garamond", Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 9;
+    marks.forEach((text, i) => {
+      const x = (i % 8) * 128 + 64;
+      const y = Math.floor(i / 8) * 128 + 68;
       ctx.strokeStyle = 'rgba(8,6,10,0.85)';
-      ctx.strokeText(text, 64, 68);
+      ctx.strokeText(text, x, y);
       ctx.fillStyle = '#e3d6b6';
-      ctx.fillText(text, 64, 68);
+      ctx.fillText(text, x, y);
     });
-    return new THREE.Mesh(
-      new THREE.PlaneGeometry(0.3, 0.3),
-      new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false }),
-    );
-  };
-  const labels = [];
-  for (let i = 0; i < 8; i++) {
-    for (const side of [1, -1]) {
-      const file = label('abcdefgh'[i]);
-      file.position.set(i - 3.5, 0.038, side * 4.265);
-      const rank = label(String(i + 1));
-      rank.position.set(-side * 4.265, 0.038, 3.5 - i);
-      labels.push(file, rank);
+  });
+  const ink = new THREE.MeshBasicMaterial({ map: sheet, transparent: true, depthWrite: false });
+  // All thirty-two coordinates as one mesh, each turned by this angle.
+  const coordinates = (spin) => {
+    const place = (text, x, z) => {
+      const cell = marks.indexOf(text);
+      const geometry = new THREE.PlaneGeometry(0.3, 0.3);
+      const uv = geometry.attributes.uv;
+      for (let i = 0; i < uv.count; i++) {
+        uv.setXY(i, ((cell % 8) + uv.getX(i)) / 8, (1 - Math.floor(cell / 8) + uv.getY(i)) / 2);
+      }
+      return geometry.rotateZ(spin).rotateX(-Math.PI / 2).translate(x, 0.038, z);
+    };
+    const parts = [];
+    for (let i = 0; i < 8; i++) {
+      for (const side of [1, -1]) {
+        parts.push(place('abcdefgh'[i], i - 3.5, side * 4.265), place(String(i + 1), -side * 4.265, 3.5 - i));
+      }
     }
-  }
-  for (const mesh of labels) {
-    mesh.rotation.x = -Math.PI / 2;
+    const mesh = new THREE.Mesh(mergeGeometries(parts), ink);
     scene.add(mesh);
-  }
+    return mesh;
+  };
+  const forWhite = coordinates(0);
+  const forBlack = coordinates(Math.PI);
   // Keeps the coordinates upright for whichever side the camera is on.
   return (cameraZ) => {
-    for (const mesh of labels) mesh.rotation.z = cameraZ < 0 ? Math.PI : 0;
+    forWhite.visible = cameraZ >= 0;
+    forBlack.visible = cameraZ < 0;
   };
 }
 
-// Four stone stands, each carrying three candles. A stand's stone and wax are
-// merged into one mesh apiece.
-function addCandleTowers(scene) {
-  const stone = new THREE.MeshLambertMaterial({ color: 0x3a342f, flatShading: true, reflectivity: 0 });
-  const wax = new THREE.MeshLambertMaterial({ color: 0xcfc3a4, emissive: 0x2a1c08, reflectivity: 0 });
-  const wick = new THREE.MeshBasicMaterial({ color: 0x140d08 });
-  const at = (geometry, y, x = 0, z = 0) => geometry.translate(x, y, z);
-  const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
-
-  const stand = [
-    at(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), -0.65),
-    at(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), 0.25),
-    at(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), 1.1),
-  ];
-  for (let i = 0; i < 4; i++) {
-    const a = Math.PI / 4 + i * Math.PI / 2;
-    stand.push(at(new THREE.ConeGeometry(0.07, 0.55, 4), 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32));
-  }
-  const parts = [
-    [mergeGeometries(stand), stone],
-    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.055, 0.065, h, 10), 1.2 + h / 2, x, z))), wax],
-    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.006, 0.008, 0.045, 5), 1.22 + h, x, z))), wick],
-  ];
-
+// Four iron candelabra, each carrying three candles.
+function addCandleTowers(scene, environment) {
+  const candelabra = createCandelabra(environment);
   const towers = [];
   let seed = 1;
   for (const x of [-5.7, 5.7]) {
     for (const z of [-5.7, 5.7]) {
-      const tower = new THREE.Group();
-      for (const [geometry, material] of parts) {
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = material === stone;
-        tower.add(mesh);
-      }
-      const flames = candles.map(([cx, cz, h]) => {
-        const flame = createFlame(seed++);
-        flame.object.position.set(cx, 1.245 + h, cz);
-        tower.add(flame.object);
-        return flame;
-      });
+      const { group: tower, flames } = candelabra.build(seed++);
+      // The arms lie across the line to the board, so both side candles show.
+      tower.rotation.y = Math.atan2(x, z);
       const light = new THREE.PointLight(0xff8c2e, 9, 12, 1.8);
       light.position.set(0, 2.15, 0);
       tower.add(light);
@@ -137,6 +125,8 @@ function addCandleTowers(scene) {
       }
       // Exaggerated a little, or the flicker would be lost on the stone.
       light.intensity = 9 * Math.max(0.4, 1 + (strength - 1) * 1.6);
+      // The wax glows a touch brighter and dimmer with the flames.
+      if (light === towers[0].light) candelabra.waxLight.value = 1 + (strength - 1) * 0.5;
       light.position.set(leanX * 2.5, 2.15 + (strength - 1) * 0.12, leanZ * 2.5);
     }
   };
@@ -153,13 +143,17 @@ function qualityOptions() {
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.shadowMap.enabled = true;
+  // Shadows are redrawn only when asked for (see main.js): most of the time
+  // nothing that casts one is moving.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07050b);
+  scene.background = new THREE.Color(0x000000);
   scene.fog = new THREE.FogExp2(0x0a0710, 0.017);
 
   // Reflections for the pieces and the polished squares. The stone of the
@@ -189,22 +183,38 @@ export function createScene(container) {
   scene.add(lamp, lamp.target);
 
   const orientLabels = addBoard(scene, scene.environment);
-  const flickerCandles = addCandleTowers(scene);
+  const flickerCandles = addCandleTowers(scene, scene.environment);
   const cathedral = addCathedral(scene);
+  addPillar(scene);
+  const air = createAbyssAir(scene);
+  // A faint cold light welling up from the chasm picks out the rock's shape.
+  const updraught = new THREE.DirectionalLight(0x4a5c9c, 0.55);
+  updraught.position.set(3, -8, 5);
+  scene.add(updraught);
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
 
+  // Sets how many pixels are drawn, for the quality level and the window size.
+  let detail = 0;
+  const fitResolution = () => {
+    const ratio = pixelRatioFor(detail, window.devicePixelRatio, container.clientWidth, container.clientHeight);
+    if (Math.abs(ratio - renderer.getPixelRatio()) > 0.001) renderer.setPixelRatio(ratio);
+  };
+
   const quality = createQualityGovernor((level) => {
-    const ratio = Math.min(window.devicePixelRatio, [2, 1.25, 1, 0.85][level]);
-    renderer.setPixelRatio(ratio);
+    detail = level;
+    fitResolution();
     const shadowSize = level === 0 ? 2048 : 1024;
     if (moon.shadow.mapSize.width !== shadowSize) {
       moon.shadow.mapSize.set(shadowSize, shadowSize);
       moon.shadow.map?.dispose();
       moon.shadow.map = null;
+      renderer.shadowMap.needsUpdate = true;
     }
+    // Shadows are never switched off: doing so would rebuild every shader in
+    // the middle of a game, and they now cost little.
     cathedral.setShafts(level < 2);
-    moon.castShadow = level < 3;
+    air.setVisible(level < 2);
   }, qualityOptions());
 
   // At low camera angles, shift the view upward like an architect's lens, so
@@ -212,7 +222,7 @@ export function createScene(container) {
   let shift = 0;
   const raiseView = () => {
     const polar = Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1));
-    const next = THREE.MathUtils.smoothstep(polar, 0.9, 1.44) * 0.3;
+    const next = THREE.MathUtils.smoothstep(polar, 1.05, 1.52) * 0.16;
     const { clientWidth: width, clientHeight: height } = container;
     if (!width || !height || (Math.abs(next - shift) < 0.0005 && camera.view?.fullHeight === height)) return;
     shift = next;
@@ -220,10 +230,12 @@ export function createScene(container) {
   };
 
   return {
-    renderer, scene, camera, quality,
+    renderer, scene, camera, quality, fitResolution,
     update(time, elapsed) {
       quality.frame(elapsed);
       flickerCandles(time);
+      air.update(time);
+      cathedral.update(time);
       orientLabels(camera.position.z);
       raiseView();
     },

@@ -1,11 +1,20 @@
 // A High Gothic interior after Cologne Cathedral, with the board at the
 // crossing: clustered piers, pointed arcades, triforium, tall clerestory and
-// ribbed vaults. Repeated parts are built once and instanced.
+// ribbed vaults. It has no floor. Piers and walls carry on down into a chasm
+// and are lost in the dark. Repeated parts are built once and instanced.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ashlar, flagstones, lancetGlass, roseGlass, shaftTexture, glowTexture } from './textures.js';
+import { lancetGlass, roseGlass, shaftTexture } from './textures.js';
+import { stoneMaterial } from './stoneMaterial.js';
+import { createFallingStone } from './fallingStone.js';
+import { withAbyss } from './abyssFog.js';
 
-export const FLOOR_Y = -0.8;
+// The level heights are measured from. There is no floor there.
+const BASE_Y = -0.8;
+// How far below that the stonework is built; it is black well before this.
+const DEEP = -50;
+// Where a blind arcade stands out of the walls, down in the chasm.
+const UNDERCROFT = -12;
 // Half-width of nave and transepts. The camera never travels farther out than
 // about 21 units, so piers at the crossing corners never block the board.
 const HALF = 16;
@@ -15,7 +24,7 @@ const TRANSEPT_BAYS = 2;
 const NAVE_END = HALF + BAY * NAVE_BAYS;
 const TRANSEPT_END = HALF + BAY * TRANSEPT_BAYS;
 
-// Heights above the floor.
+// Heights above the base level.
 const ARCADE_SPRING = 10;
 const ARCADE_APEX = 15;
 const TRIFORIUM = 16;
@@ -27,45 +36,7 @@ const WALL_TOP = 34;
 
 // ---------------------------------------------------------------- helpers
 
-// World-sized texture coordinates, projected along each face's main axis, so
-// stone blocks keep one scale on every part.
-function stoneUVs(geometry, tile = 6) {
-  const g = geometry.index ? geometry.toNonIndexed() : geometry;
-  const position = g.attributes.position;
-  const uv = new Float32Array(position.count * 2);
-  const corner = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  const normal = new THREE.Vector3();
-  const edge = new THREE.Vector3();
-  for (let i = 0; i < position.count; i += 3) {
-    corner.forEach((v, k) => v.fromBufferAttribute(position, i + k));
-    normal.subVectors(corner[1], corner[0]).cross(edge.subVectors(corner[2], corner[0]));
-    const [x, y, z] = [Math.abs(normal.x), Math.abs(normal.y), Math.abs(normal.z)];
-    corner.forEach((v, k) => {
-      const flat = y > x && y > z;
-      uv[(i + k) * 2] = (flat ? v.x : x > z ? v.z : v.x) / tile;
-      uv[(i + k) * 2 + 1] = (flat ? v.z : v.y) / tile;
-    });
-  }
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  return g;
-}
-
-// Candle soot and damp: the stone darkens with height.
-function addSoot(geometry) {
-  const position = geometry.attributes.position;
-  const colors = new Float32Array(position.count * 3);
-  for (let i = 0; i < position.count; i++) {
-    const y = position.getY(i);
-    const soot = THREE.MathUtils.smoothstep(y, 12, VAULT_APEX);
-    const damp = 1 - THREE.MathUtils.smoothstep(y, 0, 2.5);
-    const light = 1 - soot * 0.72 - damp * 0.22;
-    colors.set([light, light * (1 - soot * 0.06), light * (1 - soot * 0.1)], i * 3);
-  }
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  return geometry;
-}
-
-const stoneGeometry = (parts) => addSoot(stoneUVs(mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)))));
+const stoneGeometry = (parts) => mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 
 const cylinder = (top, bottom, y0, y1, sides, x = 0, z = 0) =>
   new THREE.CylinderGeometry(top, bottom, y1 - y0, sides, 1, true).translate(x, (y0 + y1) / 2, z);
@@ -122,7 +93,7 @@ function instanced(geometry, material, placements) {
   const spin = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
   const one = new THREE.Vector3(1, 1, 1);
-  placements.forEach(({ x, y = FLOOR_Y, z, turn = 0, scale }, i) => {
+  placements.forEach(({ x, y = BASE_Y, z, turn = 0, scale }, i) => {
     const size = scale ? new THREE.Vector3(scale[0], scale[1], 1) : one;
     mesh.setMatrixAt(i, matrix.compose(new THREE.Vector3(x, y, z), spin.setFromAxisAngle(up, turn), size));
   });
@@ -134,25 +105,22 @@ function instanced(geometry, material, placements) {
 
 // A bundle of slender shafts around a core, rising unbroken to the vault.
 function pierGeometry() {
-  const parts = [
-    cylinder(1.75, 1.85, 0, 0.55, 8), cylinder(1.45, 1.75, 0.55, 0.75, 8), cylinder(1.35, 1.45, 0.75, 1.15, 8),
-    cylinder(0.9, 0.9, 1.1, VAULT_SPRING, 8),
-  ];
+  const parts = [cylinder(0.9, 0.9, DEEP, VAULT_SPRING, 8)];
   for (let i = 0; i < 8; i++) {
     const angle = (i / 8) * Math.PI * 2;
     const major = i % 2 === 0;
     const radius = major ? 0.3 : 0.17;
     const x = Math.sin(angle) * 1.05;
     const z = Math.cos(angle) * 1.05;
-    parts.push(cylinder(radius, radius, 1.1, VAULT_SPRING, major ? 8 : 6, x, z));
-    parts.push(cylinder(radius, radius * 1.7, 0.9, 1.35, 8, x, z));
+    parts.push(cylinder(radius, radius, DEEP, VAULT_SPRING, major ? 8 : 6, x, z));
     // Foliage capitals where the arcade and the vault spring.
     for (const y of [ARCADE_SPRING, VAULT_SPRING]) {
       parts.push(cylinder(radius * 1.75, radius, y - 0.55, y, 6, x, z));
       parts.push(cylinder(radius * 1.85, radius * 1.85, y, y + 0.14, 6, x, z));
     }
   }
-  for (const y of [TRIFORIUM - 0.3, CLERESTORY - 0.4]) parts.push(cylinder(1.38, 1.38, y, y + 0.16, 16));
+  // Rings binding the shafts, above and down into the dark.
+  for (const y of [-19, -9, -0.2, TRIFORIUM - 0.3, CLERESTORY - 0.4]) parts.push(cylinder(1.38, 1.38, y, y + 0.16, 16));
   return stoneGeometry(parts);
 }
 
@@ -185,6 +153,24 @@ function bayGeometry() {
     parts.push(moulding(archPoints(x, CLERESTORY + WINDOW_HEIGHT * 0.52, 3, 2.3), 0.1, 0, 24));
   }
   parts.push(new THREE.TorusGeometry(1.15, 0.11, 6, 24).translate(0, CLERESTORY + WINDOW_HEIGHT * 0.76, 0));
+  return stoneGeometry(parts);
+}
+
+// The lower storey, seen dimly over the edge: a blind arch under a string
+// course, standing a little proud of the wall behind it.
+function undercroftGeometry() {
+  const half = BAY / 2;
+  const arch = archPoints(0, 0, BAY - 1.2, 4.4, 12);
+  const wall = new THREE.Shape([
+    new THREE.Vector2(-half, -9), new THREE.Vector2(-half + 0.6, -9), ...arch,
+    new THREE.Vector2(half - 0.6, -9), new THREE.Vector2(half, -9),
+    new THREE.Vector2(half, 5.6), new THREE.Vector2(-half, 5.6),
+  ]);
+  const parts = [new THREE.ExtrudeGeometry(wall, { depth: 0.9, bevelEnabled: false }).translate(0, 0, -0.45)];
+  for (const z of [-0.55, 0.55]) {
+    parts.push(moulding(arch, 0.26, z, 32));
+    parts.push(block(BAY, 0.3, 0.34, 0, 5.4, z));
+  }
   return stoneGeometry(parts);
 }
 
@@ -255,16 +241,18 @@ function vaultPlacements() {
 function endAndAisleWindows() {
   const tall = [];
   const low = [];
-  for (const x of [-9.5, -4.75, 0, 4.75, 9.5]) tall.push({ x, y: FLOOR_Y + 3, z: -NAVE_END + 0.5 });
-  for (const x of [-8, 0, 8]) tall.push({ x, y: FLOOR_Y + 8, z: NAVE_END - 0.5, turn: Math.PI, scale: [1.35, 1.7] });
+  // The five under the great rose sit low enough to leave stone between their
+  // points and its ring.
+  for (const x of [-9.5, -4.75, 0, 4.75, 9.5]) tall.push({ x, y: BASE_Y + 0.5, z: -NAVE_END + 0.5 });
+  for (const x of [-8, 0, 8]) tall.push({ x, y: BASE_Y + 8, z: NAVE_END - 0.5, turn: Math.PI, scale: [1.35, 1.7] });
   for (const s of [-1, 1]) {
     for (const z of [-8, 0, 8]) {
-      tall.push({ x: s * (TRANSEPT_END - 0.5), y: FLOOR_Y + 7, z, turn: -s * Math.PI / 2, scale: [1.35, 1.7] });
+      tall.push({ x: s * (TRANSEPT_END - 0.5), y: BASE_Y + 7, z, turn: -s * Math.PI / 2, scale: [1.35, 1.7] });
     }
     for (const sz of [-1, 1]) {
       range(NAVE_BAYS, (i) => {
         for (const dz of [-1.9, 1.9]) {
-          low.push({ x: s * (HALF + 8.4), y: FLOOR_Y + 2.2, z: sz * bayCentre(i) + dz, turn: -s * Math.PI / 2 });
+          low.push({ x: s * (HALF + 8.4), y: BASE_Y + 2.2, z: sz * bayCentre(i) + dz, turn: -s * Math.PI / 2 });
         }
       });
     }
@@ -272,33 +260,14 @@ function endAndAisleWindows() {
   return { tall, low };
 }
 
-function addFloor(group, textures) {
-  const size = 150;
-  const tile = 11;
-  const map = textures.map.clone();
-  const normalMap = textures.normalMap.clone();
-  for (const texture of [map, normalMap]) {
-    texture.repeat.set(size / tile, size / tile);
-    texture.needsUpdate = true;
-  }
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
-    new THREE.MeshLambertMaterial({ map, normalMap, color: 0x837b73, reflectivity: 0 }),
-  );
-  floor.position.y = FLOOR_Y;
-  floor.receiveShadow = true;
-  group.add(floor);
-}
-
-// Shafts of coloured light falling from the clerestory, with pools where they
-// land. They stand well back from the crossing, where the camera cannot reach.
+// Shafts of coloured light falling from the clerestory, past the crossing and
+// down into the chasm. They stand well back, where the camera cannot reach.
 function addLightShafts(group) {
   const beam = shaftTexture();
-  const spot = glowTexture();
-  const additive = (map, color, opacity) => new THREE.MeshBasicMaterial({
-    map, color, opacity, transparent: true, blending: THREE.AdditiveBlending,
+  const additive = (color) => withAbyss(new THREE.MeshBasicMaterial({
+    map: beam, color, opacity: 0.15, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide,
-  });
+  }), { density: 0.04, floor: -40 });
   const quad = (a, b, c, d) => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([a, b, c, a, c, d].flat(), 3));
@@ -311,29 +280,24 @@ function addLightShafts(group) {
     ['warm', 1, 1], ['cool', -1, 1], ['rose', 1, 2], ['violet', -1, 2],
     ['cool', 1, -1], ['warm', -1, -1], ['violet', 1, -2], ['rose', -1, -2],
   ];
+  const END = -27;
   const beams = {};
-  const pools = {};
   for (const [tint, side, bay] of falls) {
     const z = Math.sign(bay) * bayCentre(Math.abs(bay));
-    const lean = Math.sign(bay) * 2.5;
-    const top = FLOOR_Y + CLERESTORY + 7;
+    const lean = Math.sign(bay) * 5;
+    const top = BASE_Y + CLERESTORY + 7;
     const x0 = side * (HALF - 0.8);
-    const x1 = side * 3.5;
+    const x1 = -side * 3;
     (beams[tint] ||= []).push(
-      quad([x0, top, z - 2.4], [x0, top, z + 2.4], [x1, FLOOR_Y, z + lean + 3.4], [x1, FLOOR_Y, z + lean - 3.4]),
-      quad([x0, top + 2.2, z], [x0, top - 2.2, z], [x1 + side * 3, FLOOR_Y, z + lean], [x1 - side * 3, FLOOR_Y, z + lean]),
-    );
-    (pools[tint] ||= []).push(
-      new THREE.PlaneGeometry(10, 8).rotateX(-Math.PI / 2).translate(x1 + side * 0.5, FLOOR_Y + 0.02, z + lean),
+      quad([x0, top, z - 2.4], [x0, top, z + 2.4], [x1, END, z + lean + 4], [x1, END, z + lean - 4]),
+      quad([x0, top + 2.2, z], [x0, top - 2.2, z], [x1 + side * 4, END, z + lean], [x1 - side * 4, END, z + lean]),
     );
   }
   const shafts = new THREE.Group();
-  const floorLight = new THREE.Group();
   for (const [tint, color] of Object.entries(tints)) {
-    shafts.add(new THREE.Mesh(mergeGeometries(beams[tint]), additive(beam, color, 0.14)));
-    floorLight.add(new THREE.Mesh(mergeGeometries(pools[tint]), additive(spot, color, 0.24)));
+    shafts.add(new THREE.Mesh(mergeGeometries(beams[tint]), additive(color)));
   }
-  group.add(shafts, floorLight);
+  group.add(shafts);
   return shafts;
 }
 
@@ -341,20 +305,15 @@ export function addCathedral(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  const textures = ashlar();
-  // Matte stone: no specular highlight and no reflection, so nothing reads as metal.
-  const stone = new THREE.MeshLambertMaterial({
-    map: textures.map, normalMap: textures.normalMap, vertexColors: true, color: 0xc6bbae, reflectivity: 0,
-  });
-  stone.normalScale.set(0.9, 0.9);
-  const dark = new THREE.MeshBasicMaterial({ color: 0x07050a });
+  const stone = stoneMaterial({ color: 0x504a4c });
+  const dark = withAbyss(new THREE.MeshBasicMaterial({ color: 0x07050a }));
 
-  addFloor(group, flagstones());
   group.add(
     instanced(pierGeometry(), stone, pierPlacements()),
     instanced(bayGeometry(), stone, bayPlacements()),
     instanced(vaultGeometry(HALF * 2, BAY), stone, vaultPlacements()),
     instanced(vaultGeometry(HALF * 2, HALF * 2, 0.34), stone, [{ x: 0, z: 0 }]),
+    instanced(undercroftGeometry(), stone, bayPlacements().map((p) => ({ ...p, y: UNDERCROFT }))),
   );
 
   // Darkness behind the triforium arcade.
@@ -365,7 +324,7 @@ export function addCathedral(scene) {
   group.add(instanced(passage, dark, outward));
 
   // Stained glass is lit from outside, so it ignores the lamps but not the fog.
-  const glass = (map, tint) => new THREE.MeshBasicMaterial({ map, color: tint, side: THREE.DoubleSide });
+  const glass = (map, tint) => withAbyss(new THREE.MeshBasicMaterial({ map, color: tint, side: THREE.DoubleSide }));
   const clerestory = glassPane(6, WINDOW_HEIGHT).translate(0, CLERESTORY, 0);
   const panes = [lancetGlass(5), lancetGlass(23), lancetGlass(71)];
   panes.forEach((map, k) => {
@@ -384,19 +343,21 @@ export function addCathedral(scene) {
     instanced(stoneGeometry([frameFor(2.2, 8)]), stone, low),
   );
 
-  // Walls closing the four arms, and the outer walls of the nave aisles.
+  // Walls closing the four arms, and the outer walls of the nave aisles. All of
+  // them reach down as far as the piers.
+  const wall = (width, depth, top, x, z) => block(width, top - DEEP, depth, x, (top + DEEP) / 2, z);
   const walls = [
-    block(HALF * 2 + 18, WALL_TOP, 1, 0, WALL_TOP / 2, -NAVE_END - 0.1),
-    block(HALF * 2 + 18, WALL_TOP, 1, 0, WALL_TOP / 2, NAVE_END + 0.1),
+    wall(HALF * 2 + 18, 1, WALL_TOP, 0, -NAVE_END - 0.1),
+    wall(HALF * 2 + 18, 1, WALL_TOP, 0, NAVE_END + 0.1),
   ];
   for (const s of [-1, 1]) {
-    walls.push(block(1, WALL_TOP, HALF * 2, s * (TRANSEPT_END + 0.1), WALL_TOP / 2, 0));
+    walls.push(wall(1, HALF * 2, WALL_TOP, s * (TRANSEPT_END + 0.1), 0));
     for (const sz of [-1, 1]) {
-      walls.push(block(1, ARCADE_APEX + 1, BAY * NAVE_BAYS, s * (HALF + 9), (ARCADE_APEX + 1) / 2, sz * (HALF + BAY * NAVE_BAYS / 2)));
+      walls.push(wall(1, BAY * NAVE_BAYS, ARCADE_APEX + 1, s * (HALF + 9), sz * (HALF + BAY * NAVE_BAYS / 2)));
     }
   }
   const shell = new THREE.Mesh(stoneGeometry(walls), stone);
-  shell.position.y = FLOOR_Y;
+  shell.position.y = BASE_Y;
   group.add(shell);
 
   // The great rose at the east end, with stone tracery around it.
@@ -404,7 +365,7 @@ export function addCathedral(scene) {
     new THREE.CircleGeometry(7.5, 64),
     new THREE.MeshBasicMaterial({ map: roseGlass(), color: 0xb4adc4, transparent: true, fog: false }),
   );
-  rose.position.set(0, FLOOR_Y + 23.5, -NAVE_END + 0.55);
+  rose.position.set(0, BASE_Y + 23.5, -NAVE_END + 0.55);
   const ring = new THREE.Mesh(stoneGeometry([
     new THREE.TorusGeometry(7.7, 0.45, 8, 64), new THREE.TorusGeometry(8.5, 0.2, 6, 64),
   ]), stone);
@@ -413,7 +374,17 @@ export function addCathedral(scene) {
 
   const shafts = addLightShafts(group);
 
+  const rubble = createFallingStone(stone);
+  group.add(rubble.group);
+
+  // The stone costs the most to shade, so it is drawn after everything in
+  // front of it: whatever is hidden is then never shaded at all.
+  group.traverse((object) => {
+    if (object.material === stone) object.renderOrder = 1;
+  });
+
   return {
+    update(seconds) { rubble.update(seconds); },
     // Dropped on slow machines.
     setShafts(visible) { shafts.visible = visible; },
   };

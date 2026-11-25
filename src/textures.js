@@ -1,5 +1,6 @@
 // Procedural canvas textures. Nothing here is loaded from a file.
 import * as THREE from 'three';
+import { layoutWall } from './stoneLayout.js';
 
 export function seededRandom(seed) {
   return () => {
@@ -92,104 +93,127 @@ function normalFromHeight(heights, strength) {
   return asTexture(canvas, THREE.NoColorSpace);
 }
 
-// Draws something four times over so that it wraps across the tile edges.
-function wrapped(size, x, y, paint) {
-  for (const dx of [-size, 0, size]) {
-    for (const dy of [-size, 0, size]) paint(x + dx, y + dy);
-  }
-}
+const STONE_TONES = ['#8d8478', '#7f776c', '#978d7e', '#746d65', '#888075', '#9a9285', '#827a6a', '#908a82'];
 
-// Coursed stone blocks, drawn twice: once for colour, once for relief.
-function masonry({ size, rows, minWidth, maxWidth, mortar, tones, mortarColor, seed, streaks, wear }) {
-  const random = seededRandom(seed);
-  const rowHeight = size / rows;
-  const blocks = [];
-  for (let row = 0; row < rows; row++) {
-    const widths = [];
-    let used = 0;
-    while (used < size) {
-      const width = Math.min(minWidth + random() * (maxWidth - minWidth), size - used);
-      widths.push(width);
-      used += width;
+// Weathered ashlar walling: courses of uneven height, some stones two courses
+// tall, with cracked blocks, open joints, streaks and pitting. Different seeds
+// give different walls. Returns a large colour map and a half-size relief map.
+export function stoneWall(seed, size = 2048) {
+  const random = seededRandom(seed * 8191 + 3);
+  const blocks = layoutWall(size, seed, { course: [64, 132], width: [110, 340], tall: 0.08 }).map((block) => ({
+    ...block,
+    tone: STONE_TONES[Math.floor(random() * STONE_TONES.length)],
+    lift: random(),
+    cracked: random() < 0.07,
+    // Some joints have lost their mortar and read as black gaps.
+    openTop: random() < 0.09,
+    openSide: random() < 0.07,
+  }));
+  const mortar = 6;
+  const scatter = (count, make) => Array.from({ length: count }, () => ({ x: random() * size, y: random() * size, ...make() }));
+  const mottles = scatter(1500, () => ({ r: 14 + random() ** 2 * 70, dark: random() < 0.55, alpha: 0.035 + random() * 0.075 }));
+  const specks = scatter(42000, () => ({ r: 0.8 + random() ** 3 * 3.4, dark: random() < 0.62, alpha: 0.08 + random() * 0.22 }));
+  const drips = scatter(120, () => ({ width: 4 + random() * 20, length: 70 + random() * 360, alpha: 0.05 + random() * 0.13 }));
+  const cracks = blocks.filter((b) => b.cracked).map((b) => {
+    let x = b.x + b.width * (0.2 + random() * 0.6);
+    let y = b.y + mortar;
+    const points = [[x, y]];
+    while (y < b.y + b.height - mortar) {
+      x += (random() - 0.5) * 34;
+      y += 8 + random() * 20;
+      points.push([x, Math.min(y, b.y + b.height - mortar)]);
     }
-    // A sliver at the end of a course is merged into its neighbour.
-    if (widths.length > 1 && widths.at(-1) < minWidth * 0.6) widths[widths.length - 2] += widths.pop();
-    const offset = random() * size;
-    let x = offset;
-    for (const width of widths) {
-      blocks.push({
-        x: x % size, y: row * rowHeight, width, height: rowHeight,
-        tone: tones[Math.floor(random() * tones.length)], lift: random(),
-      });
-      x += width;
+    return points;
+  });
+
+  // Paints something at its place and wherever it wraps across an edge.
+  const tiled = (x, y, reachX, reachY, paint) => {
+    for (const dx of [0, x + reachX > size ? -size : x - reachX < 0 ? size : 0]) {
+      for (const dy of [0, y + reachY > size ? -size : y - reachY < 0 ? size : 0]) paint(x + dx, y + dy);
     }
-  }
-
-  const specks = Array.from({ length: wear }, () => ({
-    x: random() * size, y: random() * size, r: 0.6 + random() * 2.4, dark: random() > 0.35, alpha: 0.1 + random() * 0.25,
-  }));
-  const stains = Array.from({ length: 70 }, () => ({
-    x: random() * size, y: random() * size, r: 20 + random() * 90, dark: random() > 0.3,
-  }));
-  const drips = Array.from({ length: streaks }, () => ({
-    x: random() * size, y: random() * size, width: 2 + random() * 14, length: 60 + random() * 300,
-    alpha: 0.1 + random() * 0.28,
-  }));
-
+  };
   const eachBlock = (paint) => {
     for (const block of blocks) {
-      for (const dx of [-size, 0, size]) paint({ ...block, x: block.x + dx });
+      paint(block, block.x, block.y);
+      if (block.x + block.width > size) paint(block, block.x - size, block.y);
+    }
+  };
+  const joints = (ctx, color, thickness) => {
+    ctx.fillStyle = color;
+    eachBlock((b, x, y) => {
+      if (b.openTop) ctx.fillRect(x, y - thickness / 2, b.width, thickness);
+      if (b.openSide) ctx.fillRect(x - thickness / 2, y, thickness, b.height);
+    });
+  };
+  const fissures = (ctx, color, thickness) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    ctx.lineJoin = 'bevel';
+    for (const points of cracks) {
+      for (const shift of [0, -size]) {
+        ctx.beginPath();
+        points.forEach(([x, y], i) => (i ? ctx.lineTo(x + shift, y) : ctx.moveTo(x + shift, y)));
+        ctx.stroke();
+      }
     }
   };
 
   const color = makeCanvas(size, size, (ctx) => {
-    ctx.fillStyle = mortarColor;
+    ctx.fillStyle = '#4b453e';
     ctx.fillRect(0, 0, size, size);
-    eachBlock((b) => {
+    eachBlock((b, x, y) => {
       ctx.fillStyle = b.tone;
-      ctx.fillRect(b.x + mortar / 2, b.y + mortar / 2, b.width - mortar, b.height - mortar);
+      ctx.fillRect(x + mortar / 2, y + mortar / 2, b.width - mortar, b.height - mortar);
     });
-    for (const { x, y, r, dark } of stains) {
-      wrapped(size, x, y, (px, py) => {
+    // Many small, soft mottles: nothing large enough to be recognised again.
+    for (const { x, y, r, dark, alpha } of mottles) {
+      tiled(x, y, r, r, (px, py) => {
         const g = ctx.createRadialGradient(px, py, 0, px, py, r);
-        g.addColorStop(0, dark ? 'rgba(10,8,6,0.22)' : 'rgba(215,205,180,0.1)');
+        g.addColorStop(0, dark ? `rgba(24,18,12,${alpha})` : `rgba(222,210,184,${alpha * 0.8})`);
         g.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = g;
         ctx.fillRect(px - r, py - r, r * 2, r * 2);
       });
     }
     for (const { x, y, r, dark, alpha } of specks) {
-      ctx.fillStyle = dark ? `rgba(20,16,12,${alpha})` : `rgba(230,220,198,${alpha * 0.6})`;
+      ctx.fillStyle = dark ? `rgba(22,17,12,${alpha})` : `rgba(232,222,198,${alpha * 0.6})`;
       ctx.fillRect(x, y, r, r);
     }
     for (const { x, y, width, length, alpha } of drips) {
-      wrapped(size, x, y, (px, py) => {
+      tiled(x, y, width, length, (px, py) => {
         const g = ctx.createLinearGradient(0, py, 0, py + length);
-        g.addColorStop(0, `rgba(12,10,8,${alpha})`);
-        g.addColorStop(1, 'rgba(12,10,8,0)');
+        g.addColorStop(0, `rgba(14,11,8,${alpha})`);
+        g.addColorStop(1, 'rgba(14,11,8,0)');
         ctx.fillStyle = g;
         ctx.fillRect(px, py, width, length);
       });
     }
+    joints(ctx, 'rgba(10,8,6,0.75)', mortar + 3);
+    fissures(ctx, 'rgba(18,13,9,0.7)', 2.4);
   });
 
-  const relief = makeCanvas(size, size, (ctx) => {
-    ctx.fillStyle = '#303030';
+  const reliefSize = size / 2;
+  const relief = makeCanvas(reliefSize, reliefSize, (ctx) => {
+    ctx.scale(reliefSize / size, reliefSize / size);
+    ctx.fillStyle = '#333333';
     ctx.fillRect(0, 0, size, size);
-    eachBlock((b) => {
-      const level = Math.round(165 + b.lift * 40);
+    eachBlock((b, x, y) => {
+      const level = 160 + b.lift * 45;
       // Stepped insets round off the edge of each block.
       for (let step = 0; step < 4; step++) {
-        const inset = mortar / 2 + step * 1.5;
+        const inset = mortar / 2 + step * 3;
         const shade = Math.round(level * (0.7 + step * 0.1));
         ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
-        ctx.fillRect(b.x + inset, b.y + inset, b.width - inset * 2, b.height - inset * 2);
+        ctx.fillRect(x + inset, y + inset, b.width - inset * 2, b.height - inset * 2);
       }
     });
-    for (const { x, y, r, dark } of specks) {
-      ctx.fillStyle = dark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.25)';
-      ctx.fillRect(x, y, r * 1.4, r * 1.4);
+    for (let i = 0; i < specks.length; i += 3) {
+      const { x, y, r, dark } = specks[i];
+      ctx.fillStyle = dark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.22)';
+      ctx.fillRect(x, y, r * 1.8, r * 1.8);
     }
+    joints(ctx, '#050505', mortar + 3);
+    fissures(ctx, '#101010', 4);
   });
 
   const map = asTexture(color);
@@ -198,17 +222,42 @@ function masonry({ size, rows, minWidth, maxWidth, mortar, tones, mortarColor, s
   return { map, normalMap };
 }
 
-// Weathered ashlar walling.
-export const ashlar = () => masonry({
-  size: 512, rows: 8, minWidth: 80, maxWidth: 170, mortar: 4, seed: 311, streaks: 45, wear: 5200,
-  tones: ['#8d8478', '#7f776c', '#978d7e', '#746d65', '#888075', '#9a9285'], mortarColor: '#4a443d',
-});
-
-// Large worn floor flags.
-export const flagstones = () => masonry({
-  size: 512, rows: 4, minWidth: 110, maxWidth: 230, mortar: 6, seed: 977, streaks: 0, wear: 9000,
-  tones: ['#6f6962', '#625d57', '#776f66', '#59544f', '#6a645e'], mortarColor: '#2a2622',
-});
+// Three unrelated smooth noises in the red, green and blue channels, tiling.
+export function noiseTexture(seed = 5, size = 256, cells = 8) {
+  const random = seededRandom(seed);
+  const lattice = Array.from({ length: 3 }, () => Array.from({ length: cells * cells * 5 }, () => random()));
+  const value = (channel, x, y, frequency, offset) => {
+    const gx = (x / size) * frequency;
+    const gy = (y / size) * frequency;
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const at = (i, j) => lattice[channel][(offset + ((j % frequency) * frequency + (i % frequency))) % lattice[channel].length];
+    const fx = gx - x0;
+    const fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
+    const bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
+    return top + (bottom - top) * sy;
+  };
+  const canvas = makeCanvas(size, size, (ctx) => {
+    const image = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const sum = value(c, x, y, cells, 0) * 0.67 + value(c, x, y, cells * 2, cells * cells) * 0.33;
+          image.data[i + c] = sum * 255;
+        }
+        image.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+  });
+  const texture = asTexture(canvas, THREE.NoColorSpace);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
 
 const JEWELS = ['#8d1630', '#1f3f98', '#60207f', '#106350', '#b27f1c', '#7a2d12', '#2a62a8'];
 
@@ -301,34 +350,57 @@ export function roseGlass() {
   });
 }
 
-// Pale, pitted limestone.
-export function limestone(seed, size = 512) {
+// Cracks in old masonry, white on black, tiling both ways. Each runs mostly
+// downward in short, sharp turns, thins out, and throws off finer splits.
+export function crackTexture(seed, size = 1024) {
   const random = seededRandom(seed);
-  return canvasTexture(size, (ctx) => {
-    ctx.fillStyle = '#8f8576';
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 380; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const r = 8 + random() * 55;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const tone = random();
-      g.addColorStop(0, tone < 0.4 ? 'rgba(50,42,32,0.2)' : tone < 0.75 ? 'rgba(215,202,174,0.17)' : 'rgba(120,100,70,0.18)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  const range = (min, max) => min + random() * (max - min);
+  const segments = [];
+  const crack = (x, y, heading, steps, width, branching) => {
+    let angle = heading;
+    for (let step = 0; step < steps; step++) {
+      angle += range(-0.75, 0.75) + (heading - angle) * 0.35;
+      const length = range(8, 26);
+      const nx = x + Math.cos(angle) * length;
+      const ny = y + Math.sin(angle) * length;
+      segments.push([x, y, nx, ny, width * (1 - 0.85 * (step / steps))]);
+      if (branching > 0 && random() < 0.11) {
+        crack(nx, ny, angle + (random() < 0.5 ? -1 : 1) * range(0.6, 1.3),
+          Math.round(steps * range(0.25, 0.55)), width * 0.5, branching - 1);
+      }
+      x = nx;
+      y = ny;
     }
-    for (let i = 0; i < 5200; i++) {
-      ctx.fillStyle = random() < 0.65
-        ? `rgba(35,28,20,${0.2 + random() * 0.4})` : `rgba(232,222,200,${0.15 + random() * 0.25})`;
-      ctx.beginPath();
-      ctx.arc(random() * size, random() * size, 0.4 + random() ** 3 * 2.8, 0, Math.PI * 2);
-      ctx.fill();
+  };
+  for (let i = 0; i < 17; i++) {
+    crack(random() * size, random() * size, Math.PI / 2 + range(-0.8, 0.8), Math.round(range(12, 34)), range(2.6, 6), 2);
+  }
+
+  const canvas = makeCanvas(size, size, (ctx) => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#fff';
+    ctx.lineCap = 'round';
+    for (const [x, y, nx, ny, width] of segments) {
+      ctx.lineWidth = width;
+      // Drawn again across each edge it comes near, so the tile has no seam.
+      for (const dx of [-size, 0, size]) {
+        for (const dy of [-size, 0, size]) {
+          if (Math.max(x, nx) + dx < -8 || Math.min(x, nx) + dx > size + 8) continue;
+          if (Math.max(y, ny) + dy < -8 || Math.min(y, ny) + dy > size + 8) continue;
+          ctx.beginPath();
+          ctx.moveTo(x + dx, y + dy);
+          ctx.lineTo(nx + dx, ny + dy);
+          ctx.stroke();
+        }
+      }
     }
   });
+  const texture = asTexture(canvas, THREE.NoColorSpace);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return texture;
 }
 
-// White with soft edges; `fade` makes it thin out toward the bottom.
 export function shaftTexture() {
   return paintedTexture(128, 256, (ctx, width, height) => {
     const image = ctx.createImageData(width, height);

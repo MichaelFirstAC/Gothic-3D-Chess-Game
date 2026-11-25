@@ -7,18 +7,82 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>♛</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <!-- The loading screen is styled here so it shows with the very first paint.
+       It animates only transform and opacity, which keep moving while the page
+       is busy building the scene. -->
+  <style>
+    html, body { background: #000; }
+    #loading {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+      padding: 24px; text-align: center; color: #9d93a3;
+      background: radial-gradient(ellipse at 50% 46%, #17101c 0%, #07050a 55%, #000 100%);
+      font-family: "EB Garamond", Georgia, serif;
+      transition: opacity 0.9s ease, visibility 0s linear 0.9s;
+    }
+    #loading.done { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loading-candle { position: relative; width: 14px; height: 78px; margin-top: 34px; }
+    .loading-candle::before {
+      content: ""; position: absolute; inset: 30px 0 0; border-radius: 3px 3px 1px 1px;
+      background: linear-gradient(90deg, #7d6e52, #e6d6b0 45%, #6e604a);
+    }
+    .loading-flame, .loading-glow { position: absolute; left: 50%; }
+    .loading-flame {
+      top: 0; width: 12px; height: 28px; margin-left: -6px; transform-origin: 50% 90%;
+      border-radius: 50% 50% 50% 50% / 66% 66% 34% 34%;
+      background: radial-gradient(ellipse at 50% 72%, #fff6d8 0 18%, #ffbe4d 42%, #e2621c 68%, rgba(190, 50, 10, 0) 82%);
+      animation: loading-flicker 1.3s ease-in-out infinite;
+    }
+    .loading-glow {
+      top: -44px; width: 120px; height: 120px; margin-left: -60px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 150, 50, 0.28), rgba(255, 120, 30, 0) 68%);
+      animation: loading-breathe 2.1s ease-in-out infinite;
+    }
+    #loading h1 {
+      margin: 0; color: #c9a55c; font-weight: 400; font-size: clamp(34px, 7vw, 52px);
+      font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif;
+    }
+    .loading-bar { width: min(260px, 70vw); height: 2px; background: #2a2231; overflow: hidden; }
+    .loading-bar i {
+      display: block; height: 100%; background: #c9a55c;
+      transform: scaleX(0.05); transform-origin: 0 50%; transition: transform 0.8s ease;
+    }
+    .loading-text { margin: 0; min-height: 1.5em; max-width: 34ch; font-size: 17px; letter-spacing: 0.04em; }
+    #loading.failed .loading-bar { display: none; }
+    @keyframes loading-flicker {
+      0%, 100% { transform: scale(1, 1) rotate(-1deg); }
+      23% { transform: scale(0.92, 1.1) rotate(2deg); }
+      47% { transform: scale(1.06, 0.93) rotate(-2deg); }
+      71% { transform: scale(0.96, 1.05) rotate(1deg); }
+    }
+    @keyframes loading-breathe {
+      0%, 100% { opacity: 0.75; transform: scale(0.94); }
+      50% { opacity: 1; transform: scale(1.06); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .loading-flame, .loading-glow { animation: none; }
+    }
+  </style>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <main id="stage" aria-label="3D chess board. Drag or use A and D to rotate, W and S to tilt, scroll or use Q and E to zoom. Click a piece and then a square to move.">
+  <div id="loading" role="status" aria-live="polite">
+    <div class="loading-candle" aria-hidden="true"><span class="loading-glow"></span><span class="loading-flame"></span></div>
+    <h1>Gothic Chess</h1>
+    <div class="loading-bar" aria-hidden="true"><i></i></div>
+    <p class="loading-text">Opening the doors…</p>
+    <noscript><p>Gothic Chess needs JavaScript.</p></noscript>
+  </div>
+
+  <main id="stage" inert aria-label="3D chess board. Drag or use A and D to rotate, W and S to tilt, scroll or use Q and E to zoom. Click a piece and then a square to move.">
     <div id="eval-bar" role="img" hidden>
       <div id="eval-fill"></div>
       <span id="eval-label"></span>
     </div>
   </main>
 
-  <aside id="panel">
+  <aside id="panel" inert>
     <header>
       <h1>Gothic Chess</h1>
     </header>
@@ -92,6 +156,6 @@
     <div id="dialog-actions"></div>
   </dialog>
 
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/boot.js"></script>
 </body>
 </html>
