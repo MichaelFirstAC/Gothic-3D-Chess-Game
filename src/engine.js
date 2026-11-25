@@ -44,6 +44,18 @@ export function parseFen(fen) {
   };
 }
 
+export function toFen(state) {
+  const rows = [];
+  for (let rank = 7; rank >= 0; rank--) {
+    const row = state.board.slice(rank * 8, rank * 8 + 8).map((p) => p || '1').join('');
+    // Runs of empty squares are written as a single digit.
+    rows.push(row.replace(/1+/g, (run) => String(run.length)));
+  }
+  const castling = ['K', 'Q', 'k', 'q'].filter((r) => state.castling[r]).join('') || '-';
+  const ep = state.ep >= 0 ? squareName(state.ep) : '-';
+  return `${rows.join('/')} ${state.turn} ${castling} ${ep} ${state.halfmove} ${state.fullmove}`;
+}
+
 export function isAttacked(board, sq, by) {
   const piece = (type) => (by === 'w' ? type.toUpperCase() : type);
   // A pawn attacks diagonally forward, so look one rank "behind" the target.
@@ -270,6 +282,92 @@ export function toSan(state, move, moves = legalMoves(state)) {
   const next = applyMove(state, move);
   if (inCheck(next)) san += legalMoves(next).length ? '+' : '#';
   return san;
+}
+
+// UCI notation as spoken by engines: e2e4, e1g1 (castling), e7e8q.
+export function moveToUci(move) {
+  return squareName(move.from) + squareName(move.to) + (move.promotion || '');
+}
+
+// The legal move written as `uci`, or null.
+export function uciToMove(state, uci, moves = legalMoves(state)) {
+  return moves.find((m) => moveToUci(m) === uci) || null;
+}
+
+// Drops check, mate and annotation suffixes, and accepts castling typed with zeros.
+const bareSan = (san) => san.replace(/[+#!?]+$/, '').replace(/0/g, 'O');
+
+// The legal move written as `san`, or null.
+export function sanToMove(state, san, moves = legalMoves(state)) {
+  const wanted = bareSan(san);
+  return moves.find((m) => bareSan(toSan(state, m, moves)) === wanted) || null;
+}
+
+// Splits PGN movetext into SAN tokens, skipping comments (including clock
+// readings), variations, NAGs, move numbers and the result marker.
+function sanTokens(movetext) {
+  let mainLine = '';
+  let depth = 0; // inside this many nested variations
+  for (let i = 0; i < movetext.length; i++) {
+    const ch = movetext[i];
+    if (ch === '{') {
+      const end = movetext.indexOf('}', i + 1);
+      if (end < 0) throw new Error('PGN has a comment that is never closed.');
+      i = end;
+      mainLine += ' ';
+    } else if (ch === ';') {
+      const end = movetext.indexOf('\n', i);
+      i = end < 0 ? movetext.length : end;
+      mainLine += ' ';
+    } else if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (!depth) throw new Error('PGN has an unmatched ")".');
+      depth--;
+      mainLine += ' ';
+    } else if (!depth) mainLine += ch;
+  }
+  if (depth) throw new Error('PGN has a variation that is never closed.');
+  return mainLine
+    .replace(/\$\d+/g, ' ')
+    .replace(/\d+\s*\.(\s*\.)*/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token && !/^(1-0|0-1|1\/2-1\/2|\*|[!?]+|e\.p\.)$/.test(token));
+}
+
+const RESULT_WINNERS = { '1-0': 'w', '0-1': 'b', '1/2-1/2': null };
+
+// Reads one game. Returns { headers, game } with every move replayed on `game`.
+export function parsePgn(text) {
+  const headers = {};
+  const body = [];
+  // trim() also removes a byte order mark at the start of the file.
+  for (const line of text.trim().split(/\r?\n/)) {
+    const tag = !body.length && line.match(/^\s*\[(\w+)\s+"((?:\\.|[^"\\])*)"\]\s*$/);
+    if (tag) headers[tag[1]] = tag[2].replace(/\\(.)/g, '$1');
+    else if (!line.startsWith('%') && (body.length || line.trim())) body.push(line);
+  }
+  if (headers.Variant && !/^(standard|from position)$/i.test(headers.Variant)) {
+    throw new Error(`The ${headers.Variant} variant is not supported.`);
+  }
+  const tokens = sanTokens(body.join('\n'));
+  if (!tokens.length && !Object.keys(headers).length) throw new Error('No chess game found in the PGN.');
+
+  const game = new Game(headers.FEN || START_FEN);
+  tokens.forEach((token, index) => {
+    const label = `${game.state.fullmove}${game.state.turn === 'w' ? '.' : '...'} ${token}`;
+    if (game.result) {
+      throw new Error(`PGN continues past the end of the game (${game.result.reason}) at ${label}.`);
+    }
+    const move = sanToMove(game.state, token, game.moves);
+    if (!move) throw new Error(`Illegal or unreadable move ${label} (half-move ${index + 1}).`);
+    game.play(move.from, move.to, move.promotion);
+  });
+
+  // Resignations, timeouts and agreed draws only show in the headers.
+  if (!game.result && headers.Result in RESULT_WINNERS) {
+    game.result = { winner: RESULT_WINNERS[headers.Result], reason: 'the recorded result' };
+  }
+  return { headers, game };
 }
 
 export class Game {

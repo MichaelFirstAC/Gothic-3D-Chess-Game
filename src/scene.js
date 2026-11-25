@@ -325,6 +325,67 @@ export function createScene(container) {
   };
 }
 
+// A glowing arrow from one square to another, for the engine's preferred move.
+export function createBestMoveArrow(scene) {
+  const arrow = new THREE.Group();
+  arrow.visible = false;
+  scene.add(arrow);
+
+  const material = (opacity) => new THREE.MeshBasicMaterial({
+    color: 0x2fd391,
+    opacity,
+    transparent: true,
+    toneMapped: false,
+    depthWrite: false,
+    // Drawn over the pieces, so a tall piece never hides where the arrow goes.
+    depthTest: false,
+    fog: false,
+  });
+  const core = material(0.88);
+  const halo = material(0.28);
+
+  // Outline pointing along +y, laid flat so that it points toward -z.
+  const outline = (length, shaft, head, headLength) => {
+    const shape = new THREE.Shape();
+    shape.moveTo(-shaft, 0);
+    shape.lineTo(-shaft, length - headLength);
+    shape.lineTo(-head, length - headLength);
+    shape.lineTo(0, length);
+    shape.lineTo(head, length - headLength);
+    shape.lineTo(shaft, length - headLength);
+    shape.lineTo(shaft, 0);
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
+  };
+
+  return {
+    // move: { from, to } or null to hide.
+    show(move) {
+      for (const mesh of arrow.children) mesh.geometry.dispose();
+      arrow.clear();
+      arrow.visible = Boolean(move);
+      if (!move) return;
+      const from = squarePosition(move.from);
+      const direction = squarePosition(move.to).sub(from);
+      const length = direction.length() - 0.1;
+      for (const [geometry, look] of [
+        [outline(length, 0.13, 0.34, 0.5), halo],
+        [outline(length - 0.05, 0.065, 0.25, 0.4), core],
+      ]) {
+        const mesh = new THREE.Mesh(geometry, look);
+        mesh.renderOrder = 3;
+        arrow.add(mesh);
+      }
+      arrow.position.copy(from).addScaledVector(direction.normalize(), 0.2).setY(0.06);
+      arrow.rotation.y = Math.atan2(-direction.x, -direction.z);
+    },
+    pulse(time) {
+      core.opacity = 0.82 + Math.sin(time * 3) * 0.1;
+      halo.opacity = 0.26 + Math.sin(time * 3) * 0.1;
+    },
+  };
+}
+
 // Flat markers laid over squares for selection, legal moves, last move and check.
 export function createHighlights(scene) {
   const group = new THREE.Group();

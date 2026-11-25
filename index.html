@@ -11,7 +11,12 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <main id="stage" aria-label="3D chess board. Drag to rotate, scroll to zoom, click a piece and then a square to move."></main>
+  <main id="stage" aria-label="3D chess board. Drag to rotate, scroll to zoom, click a piece and then a square to move.">
+    <div id="eval-bar" role="img" hidden>
+      <div id="eval-fill"></div>
+      <span id="eval-label"></span>
+    </div>
+  </main>
 
   <aside id="panel">
     <header>
@@ -28,12 +33,39 @@
       <div><span>Black has taken</span><output id="taken-b"></output></div>
     </section>
 
+    <section id="progress" class="review-only" aria-live="polite" hidden>
+      <p id="progress-text"></p>
+      <button id="cancel-review">Cancel</button>
+    </section>
+
     <section class="log">
       <h2>Chronicle</h2>
+      <div id="accuracy" class="review-only" aria-label="Accuracy"></div>
       <ol id="moves"></ol>
     </section>
 
+    <section id="insight" class="review-only" aria-live="polite">
+      <div id="verdict"></div>
+      <p id="explanation"></p>
+      <div id="summary" hidden>
+        <h2>Verdict of the Inquisition</h2>
+        <ul id="summary-list"></ul>
+      </div>
+      <p id="commentary-note"></p>
+    </section>
+
+    <section class="review-only review-controls">
+      <button id="step-first" aria-label="First position" title="First (Home)">⏮︎</button>
+      <button id="step-back" aria-label="Previous move" title="Previous (left arrow)">◀︎</button>
+      <button id="step-next" aria-label="Next move" title="Next (right arrow)">▶︎</button>
+      <button id="step-last" aria-label="Final position" title="Last (End)">⏭︎</button>
+      <button id="review-flip">Flip board</button>
+      <button id="exit-review">Exit review</button>
+    </section>
+
     <section class="controls">
+      <button id="review" title="Have the engine judge every move">Inquisition</button>
+      <button id="import">Import</button>
       <button id="new-game">New game</button>
       <button id="undo">Take back</button>
       <button id="claim">Claim draw</button>
@@ -49,6 +81,7 @@
   <dialog id="dialog" aria-labelledby="dialog-title">
     <h2 id="dialog-title"></h2>
     <p id="dialog-text"></p>
+    <div id="dialog-body"></div>
     <div id="dialog-actions"></div>
   </dialog>
 

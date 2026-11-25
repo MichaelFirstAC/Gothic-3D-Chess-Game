@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Game, inCheck, colorOf, squareName } from './engine.js';
 import { createPieceFactory } from './pieces.js';
-import { createScene, createHighlights, squarePosition } from './scene.js';
+import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
+import { createReviewMode } from './reviewMode.js';
+import { openImportDialog } from './importDialog.js';
 
 const NAMES = { w: 'White', b: 'Black' };
 const GLYPHS = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
@@ -14,6 +16,7 @@ const $ = (id) => document.getElementById(id);
 const stage = $('stage');
 const { renderer, scene, camera, update } = createScene(stage);
 const highlights = createHighlights(scene);
+const bestArrow = createBestMoveArrow(scene);
 const makePiece = createPieceFactory();
 const canvas = renderer.domElement;
 
@@ -38,10 +41,10 @@ function placePiece(piece, square) {
 }
 
 // Captured pieces stand in two rows beside the board, on their captor's side.
-function refreshGraveyard() {
+function refreshGraveyard(history = game.history) {
   graveyard.clear();
   const counts = { w: 0, b: 0 };
-  for (const { move } of game.history) {
+  for (const { move } of history) {
     if (!move.captured) continue;
     const captor = colorOf(move.piece);
     const index = counts[captor]++;
@@ -57,11 +60,14 @@ function refreshGraveyard() {
   }
 }
 
-function syncPieces() {
+let boardVersion = 0; // bumped whenever the pieces are rebuilt from scratch
+
+function syncPieces(state = game.state, history = game.history) {
+  boardVersion++;
   board.clear();
   meshes.clear();
-  game.state.board.forEach((piece, square) => piece && placePiece(piece, square));
-  refreshGraveyard();
+  state.board.forEach((piece, square) => piece && placePiece(piece, square));
+  refreshGraveyard(history);
 }
 
 // ---------------------------------------------------------------- animation
@@ -95,6 +101,7 @@ function slide(mesh, to, hop) {
 }
 
 async function animateMove(move) {
+  const version = boardVersion;
   const mover = meshes.get(move.from);
   const victimSquare = move.flag === 'ep' ? move.to + (colorOf(move.piece) === 'w' ? -8 : 8) : move.to;
   const victim = move.captured ? meshes.get(victimSquare) : null;
@@ -119,6 +126,8 @@ async function animateMove(move) {
     }));
   }
   await Promise.all(jobs);
+  // The board was rebuilt mid-move, so these pieces are no longer on it.
+  if (version !== boardVersion) return;
   if (victim) board.remove(victim);
   meshes.set(move.to, mover);
   if (move.promotion) {
@@ -157,6 +166,7 @@ function homeCamera() {
 function turnCamera(side) {
   if (side === viewSide) return Promise.resolve();
   viewSide = side;
+  $('eval-bar').classList.toggle('flipped', side === 'b');
   const start = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
   const goal = side === 'w' ? 0 : Math.PI;
   let delta = goal - start.theta;
@@ -190,6 +200,7 @@ function ask(title, text, choices) {
   if (dialog.open) return Promise.resolve(null);
   $('dialog-title').textContent = title;
   $('dialog-text').textContent = text;
+  $('dialog-body').replaceChildren();
   return new Promise((resolve) => {
     let answer = null;
     $('dialog-actions').replaceChildren(...choices.map(({ label, value, glyph }) => {
@@ -240,6 +251,27 @@ function renderMarks() {
   highlights.show(marks);
 }
 
+// decorate(index, san) may return an element to show in place of the plain text.
+function renderMoveList(history, decorate = (index, san) => san) {
+  const rows = [];
+  history.forEach(({ state, san }, index) => {
+    const white = state.turn === 'w';
+    const cell = decorate(index, san);
+    if (white || !rows.length) rows.push({ number: state.fullmove, w: white ? cell : '…', b: white ? '' : cell });
+    else rows.at(-1).b = cell;
+  });
+  $('moves').replaceChildren(...rows.map((row) => {
+    const item = document.createElement('li');
+    for (const [className, content] of [['number', `${row.number}.`], ['san', row.w], ['san', row.b]]) {
+      const cell = document.createElement('span');
+      cell.className = className;
+      cell.append(content);
+      item.append(cell);
+    }
+    return item;
+  }));
+}
+
 function renderPanel() {
   const check = inCheck(game.state);
   const status = game.result
@@ -260,24 +292,8 @@ function renderPanel() {
       .join('');
   }
 
-  const rows = [];
-  for (const { state, san } of game.history) {
-    const white = state.turn === 'w';
-    if (white || !rows.length) rows.push({ number: state.fullmove, w: white ? san : '…', b: white ? '' : san });
-    else rows.at(-1).b = san;
-  }
-  const list = $('moves');
-  list.replaceChildren(...rows.map((row) => {
-    const item = document.createElement('li');
-    for (const [className, text] of [['number', `${row.number}.`], ['san', row.w], ['san', row.b]]) {
-      const cell = document.createElement('span');
-      cell.className = className;
-      cell.textContent = text;
-      item.append(cell);
-    }
-    return item;
-  }));
-  list.scrollTop = list.scrollHeight;
+  renderMoveList(game.history);
+  $('moves').scrollTop = $('moves').scrollHeight;
 
   const over = Boolean(game.result);
   const canClaim = !over && (claims.length > 0 || game.intendedDrawClaims().length > 0);
@@ -286,6 +302,8 @@ function renderPanel() {
   $('offer').disabled = busy || over;
   $('resign').disabled = busy || over;
   $('new-game').disabled = busy;
+  $('review').disabled = busy || !game.history.length;
+  $('import').disabled = busy;
 }
 
 function render() {
@@ -296,11 +314,61 @@ function render() {
 async function announceResult() {
   if (!game.result) return;
   const { main, detail } = resultText(game.result);
-  const again = await ask(main, detail, [
-    { label: 'New game', value: true },
-    { label: 'View board', value: false },
+  const choice = await ask(main, detail, [
+    { label: 'Inquisition', value: 'review' },
+    { label: 'New game', value: 'new' },
+    { label: 'View board', value: 'stay' },
   ]);
-  if (again) newGame();
+  if (choice === 'new') newGame();
+  if (choice === 'review') reviewCurrentGame();
+}
+
+// ---------------------------------------------------------------- review
+
+const review = createReviewMode({
+  sync: syncPieces,
+  async animate(move, history) {
+    const version = boardVersion;
+    await animateMove(move);
+    if (version === boardVersion) refreshGraveyard(history);
+  },
+  mark: (marks) => highlights.show(marks),
+  arrow: (move) => bestArrow.show(move),
+  moveList: renderMoveList,
+  // Back to the live game, exactly as it was left.
+  exit() {
+    syncPieces();
+    render();
+    if (sideBeforeImport) turnCamera(sideBeforeImport);
+    sideBeforeImport = null;
+  },
+});
+
+let sideBeforeImport = null;
+
+// Reviews a game fetched by username, seen from that player's side of the board.
+async function importGame() {
+  if (busy || review.active) return;
+  const record = await openImportDialog();
+  if (!record || busy || review.active) return;
+  selected = hovered = -1;
+  canvas.classList.remove('pointing');
+  sideBeforeImport = viewSide;
+  review.open(record);
+  if (record.side) turnCamera(record.side);
+}
+
+function reviewCurrentGame() {
+  if (busy || review.active) return;
+  selected = hovered = -1;
+  canvas.classList.remove('pointing');
+  review.open({
+    history: game.history.slice(),
+    finalState: game.state,
+    result: game.result,
+    title: game.result ? 'Judging the finished game' : 'Judging the game so far',
+    resultText: game.result && `${resultText(game.result).main} ${resultText(game.result).detail}`,
+  });
 }
 
 // ---------------------------------------------------------------- moves
@@ -391,7 +459,7 @@ const isOwnPiece = (square) => {
 };
 
 function handleSquare(square) {
-  if (busy) return;
+  if (busy || review.active) return;
   if (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)) makeMove(selected, square);
   else if (square >= 0 && square !== selected && isOwnPiece(square)) select(square);
   else select(-1);
@@ -409,7 +477,7 @@ canvas.addEventListener('pointerup', (event) => {
   press = null;
 });
 canvas.addEventListener('pointermove', (event) => {
-  if (event.pointerType !== 'mouse') return;
+  if (event.pointerType !== 'mouse' || review.active) return;
   const square = busy || event.buttons ? -1 : pickSquare(event);
   const useful = square >= 0 && (isOwnPiece(square)
     || (selected >= 0 && game.movesFrom(selected).some((m) => m.to === square)));
@@ -421,7 +489,7 @@ canvas.addEventListener('pointermove', (event) => {
   }
 });
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !dialog.open) select(-1);
+  if (event.key === 'Escape' && !dialog.open && !review.active) select(-1);
 });
 
 $('new-game').addEventListener('click', async () => {
@@ -485,9 +553,13 @@ $('resign').addEventListener('click', async () => {
   announceResult();
 });
 
-$('flip').addEventListener('click', () => {
+const flipBoard = () => {
   if (controls.enabled) turnCamera(viewSide === 'w' ? 'b' : 'w');
-});
+};
+$('flip').addEventListener('click', flipBoard);
+$('review-flip').addEventListener('click', flipBoard);
+$('review').addEventListener('click', reviewCurrentGame);
+$('import').addEventListener('click', importGame);
 
 $('auto-turn').addEventListener('change', (event) => {
   if (event.target.checked && controls.enabled) turnCamera(game.state.turn);
@@ -500,6 +572,7 @@ renderer.setAnimationLoop((now) => {
   if (controls.enabled) controls.update();
   update(now / 1000);
   highlights.pulse(now / 1000);
+  bestArrow.pulse(now / 1000);
   renderer.render(scene, camera);
 });
 
@@ -511,6 +584,14 @@ render();
 if (import.meta.env.DEV) {
   window.chessDebug = {
     get game() { return game; },
+    review,
+    // True when the pieces on screen match `state` exactly, with no strays.
+    boardMatches(state) {
+      return board.children.length === meshes.size && state.board.every((piece, square) => {
+        const mesh = meshes.get(square);
+        return piece ? Boolean(mesh) && mesh.position.distanceTo(squarePosition(square)) < 1e-6 : !mesh;
+      });
+    },
     // Screen position of a square, for simulating real clicks.
     screenPoint(square, height = 0) {
       const v = squarePosition(square).setY(height).project(camera);

@@ -5,6 +5,7 @@
   --blood: #8f1d2b;
   --panel: #100d15;
   --line: #3a3042;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -122,9 +123,123 @@ dialog h2 { color: var(--gold); font-size: 18px; letter-spacing: 0.1em; }
 #dialog-actions button { min-width: 90px; padding: 10px 14px; font: 600 16px 'EB Garamond', Georgia, serif; }
 #dialog-actions button .glyph { display: block; font: 38px/1.1 'Segoe UI Symbol', serif; }
 
+/* ---------------------------------------------------------------- review */
+
+[hidden] { display: none !important; }
+#review { border-color: #6b5530; color: var(--gold); letter-spacing: 0.12em; }
+
+.review-only { display: none; }
+body.reviewing .review-only { display: block; }
+body.reviewing .captures,
+body.reviewing .controls { display: none; }
+body.reviewing #panel { overflow-y: auto; }
+body.reviewing .log { min-height: 150px; }
+
+body.reviewing #progress { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#progress p { margin: 0; color: var(--gold); }
+
+body.reviewing #accuracy { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+#accuracy:empty { margin: 0; }
+#accuracy div { min-width: 0; padding: 5px 8px; border: 1px solid var(--line); text-align: center; }
+#accuracy span { display: block; overflow: hidden; color: var(--dim); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+#accuracy strong { font: 700 18px 'Cinzel', serif; }
+
+#moves button.move {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 0 4px;
+  border-color: transparent;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+#moves button.move:hover, #moves button.move:focus-visible { border-color: var(--gold); }
+#moves button.current { background: rgb(201 165 92 / 0.2); border-color: #6b5530; }
+
+.mark { font-weight: 600; }
+.best .mark, .verdict-title.best { color: #93b392; }
+.verdict-title.good { color: var(--ink); }
+.inaccuracy .mark, .verdict-title.inaccuracy { color: #b9a864; }
+.mistake .mark, .verdict-title.mistake { color: #c48a5c; }
+.blunder .mark, .verdict-title.blunder { color: #c45a66; }
+
+body.reviewing #insight { max-height: 38%; flex-shrink: 0; overflow-y: auto; }
+#insight p { margin: 0 0 4px; }
+.verdict-title { font: 600 19px 'EB Garamond', Georgia, serif; }
+.verdict-detail { color: var(--dim); }
+#insight p:empty { display: none; }
+#explanation { padding-left: 10px; border-left: 2px solid #6b5530; }
+#summary { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+#summary ul { margin: 0; padding-left: 18px; }
+#commentary-note { color: var(--dim); font-size: 14px; }
+/* Moves that have (or are waiting for) written commentary. */
+#moves button.key { text-decoration: underline dotted var(--gold); text-underline-offset: 4px; }
+
+body.reviewing .review-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.review-controls #review-flip, .review-controls #exit-review { grid-column: span 2; }
+
+#eval-bar {
+  position: absolute;
+  top: 12%;
+  right: 10px;
+  bottom: 12%;
+  z-index: 1;
+  width: 16px;
+  border: 1px solid #6b5530;
+  background: #1b1620;
+  box-shadow: 0 0 14px rgb(0 0 0 / 0.7);
+  pointer-events: none;
+}
+#eval-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(90deg, #cfc2a2, #e6dcc6);
+  transition: height 0.35s ease;
+}
+/* White's share grows from White's side of the board. */
+#eval-bar.flipped #eval-fill { top: 0; bottom: auto; }
+#eval-label {
+  position: absolute;
+  right: -2px;
+  bottom: -26px;
+  color: var(--ink);
+  font: 600 13px 'Cinzel', serif;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- import */
+
+.import-form { display: flex; gap: 8px; }
+.import-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: rgb(0 0 0 / 0.4);
+  color: var(--ink);
+  font: 17px 'EB Garamond', Georgia, serif;
+}
+.import-form input:focus { border-color: var(--gold); outline: none; }
+.import-status { margin: 10px 0 0; color: var(--dim); }
+.import-status:empty { display: none; }
+.import-games { max-height: 40vh; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.import-games li + li { margin-top: 6px; }
+.import-games button { width: 100%; text-align: left; font: 16px 'EB Garamond', Georgia, serif; }
+.import-games span, .import-games small { display: block; padding: 0 4px; }
+.import-games small { color: var(--dim); font-size: 13px; }
+
 @media (max-width: 760px) {
+  body.reviewing #insight { max-height: 220px; }
   body { display: block; overflow: auto; }
   #stage { height: 66vh; }
   #panel { border-left: 0; border-top: 1px solid var(--line); }
   #moves { max-height: 180px; }
+  /* Keep the board and the step buttons on screen together. */
+  body.reviewing #stage { height: 56vh; }
+  body.reviewing .review-controls { order: -1; }
+  #eval-bar { right: 4px; width: 9px; }
+  #eval-label { right: 0; font-size: 12px; }
 }
