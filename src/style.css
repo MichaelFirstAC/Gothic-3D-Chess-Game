@@ -237,4 +237,9 @@ body.reviewing .review-controls { display: grid; grid-template-columns: repeat(4
   #stage { height: 66vh; }
   #panel { border-left: 0; border-top: 1px solid var(--line); }
   #moves { max-height: 180px; }
+  /* Keep the board and the step buttons on screen together. */
+  body.reviewing #stage { height: 56vh; }
+  body.reviewing .review-controls { order: -1; }
+  #eval-bar { right: 4px; width: 9px; }
+  #eval-label { right: 0; font-size: 12px; }
 }

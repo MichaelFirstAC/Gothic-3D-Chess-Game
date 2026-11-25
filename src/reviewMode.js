@@ -1,6 +1,6 @@
 // "The Inquisition": review mode. Runs the analysis, steps the 3D board through
 // the game and fills the side panel. The live game is never modified.
-import { inCheck, moveToUci } from './engine.js';
+import { inCheck, moveToUci, toFen } from './engine.js';
 import { createStockfish, DEFAULT_DEPTH } from './analysis/stockfish.js';
 import { createStockfishWorker } from './analysis/stockfishWorker.js';
 import { reviewGame } from './analysis/review.js';
@@ -238,8 +238,9 @@ export function createReviewMode(view) {
   async function analyse(own) {
     const { record } = own;
     const depth = searchDepth();
-    const key = [depth, ...record.history.map((h) => moveToUci(h.move)), record.result?.reason,
-      record.history[0].state.board.join('')].join(' ');
+    // The coached side is part of the key because the commentary depends on it.
+    const key = [depth, record.side, record.result?.reason, toFen(record.history[0].state),
+      ...record.history.map((h) => moveToUci(h.move))].join(' ');
     if (cache.has(key)) return cache.get(key);
 
     let engine = null;
