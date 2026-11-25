@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Game, inCheck, colorOf, squareName } from './engine.js';
 import { createPieceFactory } from './pieces.js';
 import { createScene, createHighlights, createBestMoveArrow, squarePosition } from './scene.js';
+import { createBoardView } from './boardView.js';
 import { createReviewMode } from './reviewMode.js';
 import { openImportDialog } from './importDialog.js';
 
@@ -27,50 +28,15 @@ let busy = false; // true while a piece is moving or a promotion is being chosen
 
 // ---------------------------------------------------------------- pieces
 
-const board = new THREE.Group();
-const graveyard = new THREE.Group();
-scene.add(board, graveyard);
-const meshes = new Map(); // square -> piece object
+const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let forceReducedMotion = false; // development aid
+const boardView = createBoardView({
+  scene, makePiece, reducedMotion: () => motion.matches || forceReducedMotion,
+});
 
-function placePiece(piece, square) {
-  const mesh = makePiece(piece);
-  mesh.position.copy(squarePosition(square));
-  mesh.userData.square = square;
-  board.add(mesh);
-  meshes.set(square, mesh);
-}
+const syncPieces = (state = game.state, history = game.history) => boardView.sync(state, history);
 
-// Captured pieces stand in two rows beside the board, on their captor's side.
-function refreshGraveyard(history = game.history) {
-  graveyard.clear();
-  const counts = { w: 0, b: 0 };
-  for (const { move } of history) {
-    if (!move.captured) continue;
-    const captor = colorOf(move.piece);
-    const index = counts[captor]++;
-    const side = captor === 'w' ? 1 : -1;
-    const mesh = makePiece(move.captured);
-    mesh.scale.setScalar(0.58);
-    mesh.position.set(
-      side * (5.35 + Math.floor(index / 8) * 0.55),
-      -0.8,
-      side * (3.6 - (index % 8) * 0.6),
-    );
-    graveyard.add(mesh);
-  }
-}
-
-let boardVersion = 0; // bumped whenever the pieces are rebuilt from scratch
-
-function syncPieces(state = game.state, history = game.history) {
-  boardVersion++;
-  board.clear();
-  meshes.clear();
-  state.board.forEach((piece, square) => piece && placePiece(piece, square));
-  refreshGraveyard(history);
-}
-
-// ---------------------------------------------------------------- animation
+// ---------------------------------------------------------------- camera moves
 
 const tweens = new Set();
 
@@ -86,56 +52,6 @@ function runTweens(now) {
       tweens.delete(item);
       item.resolve();
     }
-  }
-}
-
-function slide(mesh, to, hop) {
-  const from = mesh.position.clone();
-  const target = squarePosition(to);
-  const distance = from.distanceTo(target);
-  mesh.userData.square = to;
-  return tween(260 + distance * 65, (t) => {
-    mesh.position.lerpVectors(from, target, t);
-    mesh.position.y = Math.sin(t * Math.PI) * hop;
-  });
-}
-
-async function animateMove(move) {
-  const version = boardVersion;
-  const mover = meshes.get(move.from);
-  const victimSquare = move.flag === 'ep' ? move.to + (colorOf(move.piece) === 'w' ? -8 : 8) : move.to;
-  const victim = move.captured ? meshes.get(victimSquare) : null;
-  meshes.delete(move.from);
-  if (victim) meshes.delete(victimSquare);
-
-  const jobs = [slide(mover, move.to, move.piece.toLowerCase() === 'n' ? 1.7 : 0.12)];
-  if (move.flag === 'castle-short' || move.flag === 'castle-long') {
-    const short = move.flag === 'castle-short';
-    const rookFrom = short ? move.to + 1 : move.to - 2;
-    const rook = meshes.get(rookFrom);
-    const rookTo = short ? move.to - 1 : move.to + 1;
-    meshes.delete(rookFrom);
-    meshes.set(rookTo, rook);
-    jobs.push(slide(rook, rookTo, 1.5));
-  }
-  if (victim) {
-    jobs.push(tween(460, (t) => {
-      const sink = Math.max(0, t - 0.4) / 0.6;
-      victim.position.y = -sink * 0.9;
-      victim.scale.setScalar(1 - sink * 0.85);
-    }));
-  }
-  await Promise.all(jobs);
-  // The board was rebuilt mid-move, so these pieces are no longer on it.
-  if (version !== boardVersion) return;
-  if (victim) board.remove(victim);
-  meshes.set(move.to, mover);
-  if (move.promotion) {
-    board.remove(mover);
-    const piece = colorOf(move.piece) === 'w' ? move.promotion.toUpperCase() : move.promotion;
-    placePiece(piece, move.to);
-    const crowned = meshes.get(move.to);
-    await tween(420, (t) => crowned.scale.setScalar(0.3 + 0.7 * t));
   }
 }
 
@@ -327,11 +243,7 @@ async function announceResult() {
 
 const review = createReviewMode({
   sync: syncPieces,
-  async animate(move, history) {
-    const version = boardVersion;
-    await animateMove(move);
-    if (version === boardVersion) refreshGraveyard(history);
-  },
+  animate: (move, history) => boardView.animateMove(move, history),
   mark: (marks) => highlights.show(marks),
   arrow: (move) => bestArrow.show(move),
   moveList: renderMoveList,
@@ -399,12 +311,19 @@ async function makeMove(from, to) {
   selected = -1;
   hovered = -1;
   render();
-  await animateMove(move);
-  refreshGraveyard();
+  const { settled } = await boardView.animateMove(move, game.history);
   if (!game.result && $('auto-turn').checked) await turnCamera(game.state.turn);
   busy = false;
   render();
-  announceResult();
+  await announceAfter(settled);
+}
+
+// A game that ends on a capture waits for the pieces to settle before the dialog.
+async function announceAfter(settled) {
+  const finished = game;
+  const moves = game.history.length;
+  await settled;
+  if (game === finished && game.history.length === moves && !busy && !review.active) announceResult();
 }
 
 function newGame() {
@@ -430,7 +349,7 @@ function pickSquare(event) {
   ), camera);
 
   let onPiece = -1;
-  const hit = raycaster.intersectObjects(board.children, true)[0];
+  const hit = raycaster.intersectObjects(boardView.pieces.children, true)[0];
   if (hit) {
     let object = hit.object;
     while (object.userData.square === undefined) object = object.parent;
@@ -524,9 +443,11 @@ $('claim').addEventListener('click', async () => {
     selected = -1;
     busy = true;
     render();
-    await animateMove(move);
+    const { settled } = await boardView.animateMove(move, game.history);
     busy = false;
-    refreshGraveyard();
+    render();
+    await announceAfter(settled);
+    return;
   }
   selected = -1;
   render();
@@ -569,10 +490,12 @@ $('auto-turn').addEventListener('change', (event) => {
 
 let lastFrame = 0;
 renderer.setAnimationLoop((now) => {
-  runTweens(performance.now());
-  if (controls.enabled) controls.update();
-  update(now / 1000, lastFrame ? now - lastFrame : 0);
+  const elapsed = lastFrame ? now - lastFrame : 0;
   lastFrame = now;
+  runTweens(performance.now());
+  boardView.update(elapsed / 1000);
+  if (controls.enabled) controls.update();
+  update(now / 1000, elapsed);
   highlights.pulse(now / 1000);
   bestArrow.pulse(now / 1000);
   renderer.render(scene, camera);
@@ -587,13 +510,12 @@ if (import.meta.env.DEV) {
   window.chessDebug = {
     get game() { return game; },
     review,
-    // True when the pieces on screen match `state` exactly, with no strays.
-    boardMatches(state) {
-      return board.children.length === meshes.size && state.board.every((piece, square) => {
-        const mesh = meshes.get(square);
-        return piece ? Boolean(mesh) && mesh.position.distanceTo(squarePosition(square)) < 1e-6 : !mesh;
-      });
-    },
+    // True when the pieces on screen match `state` (and the graveyard matches
+    // `history`) exactly, with no strays.
+    boardMatches: (state, history) => boardView.matches(state, history),
+    boardView,
+    move: (from, to) => makeMove(from, to),
+    reduceMotion: (value) => { forceReducedMotion = value; },
     // Screen position of a square, for simulating real clicks.
     screenPoint(square, height = 0) {
       const v = squarePosition(square).setY(height).project(camera);

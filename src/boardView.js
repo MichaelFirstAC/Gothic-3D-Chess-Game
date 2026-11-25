@@ -1,0 +1,184 @@
+// The pieces on screen: where they stand, the captured ones beside the board,
+// and how a move or its take-back is animated.
+import * as THREE from 'three';
+import { colorOf } from './engine.js';
+import { squarePosition } from './scene.js';
+import { createTimeline, easeInOut, phase } from './effects/timeline.js';
+import { createShatter } from './effects/shatter.js';
+
+const isCastle = (move) => move.flag === 'castle-short' || move.flag === 'castle-long';
+
+// Where a captured piece stood: beside the target square for en passant.
+export const victimSquare = (move) =>
+  (move.flag === 'ep' ? move.to + (colorOf(move.piece) === 'w' ? -8 : 8) : move.to);
+
+function rookShift(move) {
+  const short = move.flag === 'castle-short';
+  return { from: short ? move.to + 1 : move.to - 2, to: short ? move.to - 1 : move.to + 1 };
+}
+
+// Captured pieces stand in two rows beside the board, on their captor's side.
+export function graveyardSlots(history) {
+  const counts = { w: 0, b: 0 };
+  const slots = [];
+  for (const { move } of history) {
+    if (!move.captured) continue;
+    const captor = colorOf(move.piece);
+    const index = counts[captor]++;
+    const side = captor === 'w' ? 1 : -1;
+    slots.push({
+      key: `${captor}${index}${move.captured}`,
+      piece: move.captured,
+      position: [side * (5.35 + Math.floor(index / 8) * 0.55), -0.8, side * (3.6 - (index % 8) * 0.6)],
+    });
+  }
+  return slots;
+}
+
+// sound: (name) => void, called as things happen on the board.
+export function createBoardView({ scene, makePiece, sound = () => {}, reducedMotion = () => false }) {
+  const pieces = new THREE.Group();
+  const graveyard = new THREE.Group();
+  const effectsGroup = new THREE.Group();
+  scene.add(pieces, graveyard, effectsGroup);
+  const meshes = new Map(); // square -> piece object
+  const timeline = createTimeline();
+  const shatter = createShatter({ effectsGroup, timeline, sound, reduced: reducedMotion });
+  let version = 0; // bumped whenever the pieces are rebuilt from scratch
+
+  function place(piece, square) {
+    const mesh = makePiece(piece);
+    mesh.position.copy(squarePosition(square));
+    mesh.userData.square = square;
+    pieces.add(mesh);
+    meshes.set(square, mesh);
+    return mesh;
+  }
+
+  // Brings the graveyard to match `history`, keeping the meshes already there so
+  // that an effect in progress carries on with the very same object.
+  function refreshGraveyard(history) {
+    const slots = graveyardSlots(history);
+    const wanted = new Set(slots.map((s) => s.key));
+    for (const mesh of [...graveyard.children]) {
+      if (!wanted.has(mesh.userData.key)) graveyard.remove(mesh);
+    }
+    const present = new Set(graveyard.children.map((mesh) => mesh.userData.key));
+    for (const { key, piece, position } of slots) {
+      if (present.has(key)) continue;
+      const mesh = makePiece(piece);
+      mesh.scale.setScalar(0.58);
+      mesh.position.set(...position);
+      mesh.userData.key = key;
+      graveyard.add(mesh);
+    }
+  }
+
+  // Rebuilds everything from a position, ending any effect that is running.
+  function sync(state, history) {
+    version++;
+    timeline.cancelAll();
+    pieces.clear();
+    graveyard.clear();
+    effectsGroup.clear();
+    meshes.clear();
+    state.board.forEach((piece, square) => piece && place(piece, square));
+    refreshGraveyard(history);
+  }
+
+  const slideSeconds = (from, to) => {
+    if (reducedMotion()) return 0.2;
+    return (260 + squarePosition(from).distanceTo(squarePosition(to)) * 65) / 1000;
+  };
+
+  // Moves a mesh to a square, hopping `hop` high on the way.
+  function slide(mesh, to, hop, duration) {
+    const from = mesh.position.clone();
+    const target = squarePosition(to);
+    const height = reducedMotion() ? 0 : hop;
+    mesh.userData.square = to;
+    return timeline.run({
+      duration,
+      update(t) {
+        const e = easeInOut(phase(t, 0, duration));
+        mesh.position.lerpVectors(from, target, e);
+        mesh.position.y = Math.sin(e * Math.PI) * height;
+      },
+      end() { mesh.position.copy(target); },
+    });
+  }
+
+  const hopFor = (piece) => (piece.toLowerCase() === 'n' ? 1.7 : 0.12);
+
+  // history ends with the move being made. Resolves once the move itself is
+  // done; a capture's fragments may still be settling, and `settled` says when.
+  async function animateMove(move, history) {
+    const start = version;
+    const mover = meshes.get(move.from);
+    const victim = move.captured ? meshes.get(victimSquare(move)) : null;
+    meshes.delete(move.from);
+    const duration = slideSeconds(move.from, move.to);
+
+    let settled = Promise.resolve();
+    if (victim) {
+      meshes.delete(victimSquare(move));
+      pieces.remove(victim);
+    }
+    refreshGraveyard(history);
+    if (victim) {
+      const key = graveyardSlots(history).filter((s) => s.key[0] === colorOf(move.piece)).at(-1).key;
+      const grave = graveyard.children.find((mesh) => mesh.userData.key === key);
+      // The victim breaks as the attacker comes down on it.
+      settled = shatter.capture({ victim, grave, delay: duration * 0.68 });
+    }
+
+    const jobs = [slide(mover, move.to, hopFor(move.piece), duration)];
+    if (isCastle(move)) {
+      const rook = rookShift(move);
+      const mesh = meshes.get(rook.from);
+      meshes.delete(rook.from);
+      meshes.set(rook.to, mesh);
+      jobs.push(slide(mesh, rook.to, 1.5, slideSeconds(rook.from, rook.to) + 0.12));
+    }
+    await Promise.all(jobs);
+    // The board was rebuilt mid-move, so these pieces are no longer on it.
+    if (start !== version) return { settled };
+    meshes.set(move.to, mover);
+    sound(isCastle(move) ? 'castle' : move.piece.toLowerCase() === 'n' ? 'knight' : 'place');
+
+    if (move.promotion) {
+      pieces.remove(mover);
+      const piece = colorOf(move.piece) === 'w' ? move.promotion.toUpperCase() : move.promotion;
+      const crowned = place(piece, move.to);
+      await timeline.run({
+        duration: 0.42,
+        update(t) { crowned.scale.setScalar(0.3 + 0.7 * (t / 0.42)); },
+        end() { crowned.scale.setScalar(1); },
+      });
+    }
+    return { settled };
+  }
+
+  return {
+    pieces,
+    sync,
+    refreshGraveyard,
+    animateMove,
+    update: (seconds) => timeline.advance(seconds),
+    timeline,
+    get version() { return version; },
+    // True when the pieces on screen match `state` and `history`, with no strays.
+    matches(state, history) {
+      const placed = pieces.children.length === meshes.size && state.board.every((piece, square) => {
+        const mesh = meshes.get(square);
+        return piece
+          ? Boolean(mesh) && mesh.visible && mesh.position.distanceTo(squarePosition(square)) < 1e-6
+          : !mesh;
+      });
+      if (!placed || !history) return placed;
+      const slots = graveyardSlots(history);
+      return graveyard.children.length === slots.length && effectsGroup.children.length === 0
+        && graveyard.children.every((mesh) => mesh.visible);
+    },
+  };
+}
