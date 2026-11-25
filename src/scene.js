@@ -1,6 +1,7 @@
 // The setting: marble board, carved frame, candle towers, colonnade and rose window.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
 
@@ -358,6 +359,21 @@ export function createBestMoveArrow(scene) {
     return new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
   };
 
+  // A knight's L, as a single outline so the layers never double up at the corner.
+  const angled = (dx, dz, style) => {
+    // Shape y becomes world -z once the shape is laid flat.
+    const points = knightArrowOutline(dx, dz, style).map(([x, z]) => new THREE.Vector2(x, -z));
+    return new THREE.ShapeGeometry(new THREE.Shape(points)).rotateX(-Math.PI / 2);
+  };
+
+  const add = (halfGlow, solid) => {
+    for (const [geometry, look] of [[halfGlow, halo], [solid, core]]) {
+      const mesh = new THREE.Mesh(geometry, look);
+      mesh.renderOrder = 3;
+      arrow.add(mesh);
+    }
+  };
+
   return {
     // move: { from, to } or null to hide.
     show(move) {
@@ -367,15 +383,18 @@ export function createBestMoveArrow(scene) {
       if (!move) return;
       const from = squarePosition(move.from);
       const direction = squarePosition(move.to).sub(from);
-      const length = direction.length() - 0.1;
-      for (const [geometry, look] of [
-        [outline(length, 0.13, 0.34, 0.5), halo],
-        [outline(length - 0.05, 0.065, 0.25, 0.4), core],
-      ]) {
-        const mesh = new THREE.Mesh(geometry, look);
-        mesh.renderOrder = 3;
-        arrow.add(mesh);
+      if (isKnightShift(move.from, move.to)) {
+        const { x, z } = direction;
+        add(
+          angled(x, z, { start: 0.2, reach: 0.1, shaft: 0.13, head: 0.34, headLength: 0.5 }),
+          angled(x, z, { start: 0.2, reach: 0.05, shaft: 0.065, head: 0.25, headLength: 0.4 }),
+        );
+        arrow.position.copy(from).setY(0.06);
+        arrow.rotation.y = 0;
+        return;
       }
+      const length = direction.length() - 0.1;
+      add(outline(length, 0.13, 0.34, 0.5), outline(length - 0.05, 0.065, 0.25, 0.4));
       arrow.position.copy(from).addScaledVector(direction.normalize(), 0.2).setY(0.06);
       arrow.rotation.y = Math.atan2(-direction.x, -direction.z);
     },

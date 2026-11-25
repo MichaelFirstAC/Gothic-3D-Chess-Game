@@ -600,5 +600,6 @@ if (import.meta.env.DEV) {
     },
     camera,
     controls,
+    arrow: bestArrow,
   };
 }
