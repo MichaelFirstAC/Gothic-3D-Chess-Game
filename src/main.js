@@ -14,7 +14,7 @@ const VALUE_ORDER = 'qrbnp';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
-const { renderer, scene, camera, update } = createScene(stage);
+const { renderer, scene, camera, update, quality } = createScene(stage);
 const highlights = createHighlights(scene);
 const bestArrow = createBestMoveArrow(scene);
 const makePiece = createPieceFactory();
@@ -567,10 +567,12 @@ $('auto-turn').addEventListener('change', (event) => {
 
 // ---------------------------------------------------------------- start
 
+let lastFrame = 0;
 renderer.setAnimationLoop((now) => {
   runTweens(performance.now());
   if (controls.enabled) controls.update();
-  update(now / 1000);
+  update(now / 1000, lastFrame ? now - lastFrame : 0);
+  lastFrame = now;
   highlights.pulse(now / 1000);
   bestArrow.pulse(now / 1000);
   renderer.render(scene, camera);
@@ -601,5 +603,7 @@ if (import.meta.env.DEV) {
     camera,
     controls,
     arrow: bestArrow,
+    quality,
+    info: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries }),
   };
 }

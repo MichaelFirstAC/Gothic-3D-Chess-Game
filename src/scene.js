@@ -1,61 +1,13 @@
-// The setting: marble board, carved frame, candle towers, colonnade and rose window.
+// The setting: marble board, carved frame, candle towers and lighting. The
+// building around them is in cathedral.js.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
+import { canvasTexture, marble } from './textures.js';
+import { addCathedral } from './cathedral.js';
+import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
-
-function seededRandom(seed) {
-  return () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-}
-
-function canvasTexture(size, draw) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  draw(canvas.getContext('2d'), size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-function marble(base, vein, seed) {
-  const random = seededRandom(seed);
-  return canvasTexture(1024, (ctx, size) => {
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 500; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const r = 20 + random() * 110;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, random() > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.09)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    ctx.strokeStyle = vein;
-    for (let i = 0; i < 46; i++) {
-      let x = random() * size;
-      let y = random() * size;
-      let angle = random() * Math.PI * 2;
-      ctx.lineWidth = 0.5 + random() * 2.2;
-      ctx.globalAlpha = 0.15 + random() * 0.4;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      for (let step = 0; step < 36; step++) {
-        angle += (random() - 0.5) * 0.9;
-        x += Math.cos(angle) * 12;
-        y += Math.sin(angle) * 12;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  });
-}
 
 function addBoard(scene) {
   const textures = {
@@ -137,7 +89,7 @@ function addBoard(scene) {
 }
 
 function addCandleTowers(scene) {
-  const stone = new THREE.MeshStandardMaterial({ color: 0x25212a, roughness: 0.8, flatShading: true });
+  const stone = new THREE.MeshLambertMaterial({ color: 0x3a342f, flatShading: true, reflectivity: 0 });
   const wax = new THREE.MeshStandardMaterial({ color: 0xcfc3a4, roughness: 0.7, emissive: 0x2a1c08 });
   const flame = new THREE.MeshBasicMaterial({ color: 0xffb547 });
   const flames = [];
@@ -183,104 +135,16 @@ function addCandleTowers(scene) {
   };
 }
 
-function roseWindowTexture() {
-  const colors = ['#7d1128', '#1f3a8a', '#5b1a78', '#0f5a4a', '#a8761a'];
-  return canvasTexture(1024, (ctx, size) => {
-    const c = size / 2;
-    ctx.translate(c, c);
-    const petal = (count, inner, outer, shift) => {
-      for (let i = 0; i < count; i++) {
-        ctx.save();
-        ctx.rotate((i / count) * Math.PI * 2);
-        const half = Math.tan(Math.PI / count) * outer * 0.72;
-        ctx.beginPath();
-        ctx.moveTo(0, -inner);
-        ctx.quadraticCurveTo(half * 1.3, -(inner + outer) / 2, 0, -outer);
-        ctx.quadraticCurveTo(-half * 1.3, -(inner + outer) / 2, 0, -inner);
-        ctx.fillStyle = colors[(i + shift) % colors.length];
-        ctx.fill();
-        ctx.lineWidth = 9;
-        ctx.strokeStyle = '#08060a';
-        ctx.stroke();
-        ctx.restore();
-      }
-    };
-    petal(24, 340, 490, 1);
-    petal(16, 190, 355, 0);
-    petal(8, 60, 215, 2);
-    ctx.lineWidth = 16;
-    ctx.strokeStyle = '#3a3340';
-    for (const r of [60, 345, 498]) {
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#b98a22';
-    ctx.beginPath();
-    ctx.arc(0, 0, 52, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
-function addCathedral(scene) {
-  const stone = new THREE.MeshStandardMaterial({ color: 0x1b1822, roughness: 0.95, flatShading: true });
-
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(60, 64),
-    new THREE.MeshStandardMaterial({ color: 0x0d0b10, roughness: 0.85, metalness: 0.15 }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.8;
-  floor.receiveShadow = true;
-  scene.add(floor);
-
-  const columns = 16;
-  const radius = 23;
-  const shaft = new THREE.CylinderGeometry(0.55, 0.68, 8, 8);
-  const capital = new THREE.CylinderGeometry(0.9, 0.55, 0.6, 8);
-  // One side of a pointed arch, spanning half the gap between two columns.
-  const span = 2 * radius * Math.sin(Math.PI / columns);
-  const half = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(-span / 2, 0, 0),
-    new THREE.Vector3(-span / 2, 2.9, 0),
-    new THREE.Vector3(0, 3.9, 0),
-  );
-  const archGeometry = new THREE.TubeGeometry(half, 20, 0.26, 8);
-  for (let i = 0; i < columns; i++) {
-    const angle = ((i + 0.5) / columns) * Math.PI * 2;
-    const column = new THREE.Mesh(shaft, stone);
-    column.position.set(Math.sin(angle) * radius, 3.2, Math.cos(angle) * radius);
-    const top = new THREE.Mesh(capital, stone);
-    top.position.copy(column.position).setY(7.4);
-    scene.add(column, top);
-
-    const mid = (i / columns) * Math.PI * 2;
-    const arch = new THREE.Group();
-    const left = new THREE.Mesh(archGeometry, stone);
-    const right = new THREE.Mesh(archGeometry, stone);
-    right.scale.x = -1;
-    arch.add(left, right);
-    const apothem = radius * Math.cos(Math.PI / columns);
-    arch.position.set(Math.sin(mid) * apothem, 7.5, Math.cos(mid) * apothem);
-    arch.rotation.y = mid;
-    scene.add(arch);
-  }
-
-  const glass = roseWindowTexture();
-  for (const z of [-1, 1]) {
-    const window = new THREE.Mesh(
-      new THREE.CircleGeometry(4.2, 64),
-      new THREE.MeshBasicMaterial({ map: glass, transparent: true, fog: false, color: 0x9a93a8 }),
-    );
-    window.position.set(0, 5.2, z * 26);
-    window.rotation.y = z > 0 ? Math.PI : 0;
-    scene.add(window);
-  }
+// ?quality=high or ?quality=low fixes the level instead of measuring it.
+function qualityOptions() {
+  const wanted = new URLSearchParams(window.location.search).get('quality');
+  if (wanted === 'high') return { level: 0, maxLevel: 0 };
+  if (wanted === 'low') return { level: 3 };
+  return {};
 }
 
 export function createScene(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -288,15 +152,17 @@ export function createScene(container) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x08060d);
-  scene.fog = new THREE.FogExp2(0x08060d, 0.022);
+  scene.background = new THREE.Color(0x07050b);
+  scene.fog = new THREE.FogExp2(0x0a0710, 0.017);
 
+  // Reflections for the pieces and the polished squares. The stone of the
+  // setting is matte and takes none of it.
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.38;
+  scene.environmentIntensity = 0.34;
 
-  scene.add(new THREE.HemisphereLight(0x8c93c4, 0x2a1810, 0.75));
-  const moon = new THREE.DirectionalLight(0xcfd8ff, 2.1);
+  scene.add(new THREE.HemisphereLight(0x8c93c4, 0x2a1810, 0.55));
+  const moon = new THREE.DirectionalLight(0xcfd8ff, 1.85);
   moon.position.set(-6, 13, 4);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
@@ -306,22 +172,53 @@ export function createScene(container) {
   scene.add(moon);
   // Colored rim light, as if through stained glass, to separate the black pieces.
   for (const [color, x, z] of [[0xb0304a, 9, -7], [0x4a52d0, -9, -7], [0x8040a0, 0, 10]]) {
-    const rim = new THREE.DirectionalLight(color, 1.15);
+    const rim = new THREE.DirectionalLight(color, 0.8);
     rim.position.set(x, 5, z);
     scene.add(rim);
   }
+  // A soft lamp over the crossing keeps the board the brightest thing in view.
+  const lamp = new THREE.SpotLight(0xffe6c4, 130, 40, 0.5, 0.7, 1.6);
+  lamp.position.set(0, 17, 0);
+  scene.add(lamp, lamp.target);
 
   const orientLabels = addBoard(scene);
   const flickerCandles = addCandleTowers(scene);
-  addCathedral(scene);
+  const cathedral = addCathedral(scene);
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
+
+  const quality = createQualityGovernor((level) => {
+    const ratio = Math.min(window.devicePixelRatio, [2, 1.25, 1, 0.85][level]);
+    renderer.setPixelRatio(ratio);
+    const shadowSize = level === 0 ? 2048 : 1024;
+    if (moon.shadow.mapSize.width !== shadowSize) {
+      moon.shadow.mapSize.set(shadowSize, shadowSize);
+      moon.shadow.map?.dispose();
+      moon.shadow.map = null;
+    }
+    cathedral.setShafts(level < 2);
+    moon.castShadow = level < 3;
+  }, qualityOptions());
+
+  // At low camera angles, shift the view upward like an architect's lens, so
+  // the height of the nave shows and its verticals stay upright.
+  let shift = 0;
+  const raiseView = () => {
+    const polar = Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1));
+    const next = THREE.MathUtils.smoothstep(polar, 0.9, 1.44) * 0.3;
+    const { clientWidth: width, clientHeight: height } = container;
+    if (!width || !height || (Math.abs(next - shift) < 0.0005 && camera.view?.fullHeight === height)) return;
+    shift = next;
+    camera.setViewOffset(width, height, 0, -shift * height, width, height);
+  };
 
   return {
-    renderer, scene, camera,
-    update(time) {
+    renderer, scene, camera, quality,
+    update(time, elapsed) {
+      quality.frame(elapsed);
       flickerCandles(time);
       orientLabels(camera.position.z);
+      raiseView();
     },
   };
 }
