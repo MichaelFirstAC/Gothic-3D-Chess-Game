@@ -4,7 +4,9 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
 import { canvasTexture, marble } from './textures.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCathedral } from './cathedral.js';
+import { createFlame } from './effects/flame.js';
 import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
@@ -88,50 +90,71 @@ function addBoard(scene) {
   };
 }
 
+// Four stone stands, each carrying three candles. A stand's stone and wax are
+// merged into one mesh apiece.
 function addCandleTowers(scene) {
   const stone = new THREE.MeshLambertMaterial({ color: 0x3a342f, flatShading: true, reflectivity: 0 });
-  const wax = new THREE.MeshStandardMaterial({ color: 0xcfc3a4, roughness: 0.7, emissive: 0x2a1c08 });
-  const flame = new THREE.MeshBasicMaterial({ color: 0xffb547 });
-  const flames = [];
+  const wax = new THREE.MeshLambertMaterial({ color: 0xcfc3a4, emissive: 0x2a1c08, reflectivity: 0 });
+  const wick = new THREE.MeshBasicMaterial({ color: 0x140d08 });
+  const at = (geometry, y, x = 0, z = 0) => geometry.translate(x, y, z);
+  const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
+
+  const stand = [
+    at(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), -0.65),
+    at(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), 0.25),
+    at(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), 1.1),
+  ];
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    stand.push(at(new THREE.ConeGeometry(0.07, 0.55, 4), 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32));
+  }
+  const parts = [
+    [mergeGeometries(stand), stone],
+    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.055, 0.065, h, 10), 1.2 + h / 2, x, z))), wax],
+    [mergeGeometries(candles.map(([x, z, h]) => at(new THREE.CylinderGeometry(0.006, 0.008, 0.045, 5), 1.22 + h, x, z))), wick],
+  ];
+
+  const towers = [];
+  let seed = 1;
   for (const x of [-5.7, 5.7]) {
     for (const z of [-5.7, 5.7]) {
       const tower = new THREE.Group();
-      const part = (geometry, material, y, px = 0, pz = 0) => {
+      for (const [geometry, material] of parts) {
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(px, y, pz);
-        mesh.castShadow = material !== flame;
+        mesh.castShadow = material === stone;
         tower.add(mesh);
-        return mesh;
-      };
-      part(new THREE.CylinderGeometry(0.5, 0.58, 0.3, 8), stone, -0.65);
-      part(new THREE.CylinderGeometry(0.2, 0.3, 1.5, 8), stone, 0.25);
-      part(new THREE.CylinderGeometry(0.4, 0.22, 0.22, 8), stone, 1.1);
-      for (let i = 0; i < 4; i++) {
-        const a = Math.PI / 4 + i * Math.PI / 2;
-        part(new THREE.ConeGeometry(0.07, 0.55, 4), stone, 1.46, Math.sin(a) * 0.32, Math.cos(a) * 0.32);
       }
-      const candles = [[0, 0, 0.55], [0.17, 0.06, 0.34], [-0.1, -0.16, 0.42]];
-      for (const [cx, cz, h] of candles) {
-        part(new THREE.CylinderGeometry(0.055, 0.065, h, 10), wax, 1.2 + h / 2, cx, cz);
-        const tip = part(new THREE.SphereGeometry(0.036, 10, 8), flame, 1.26 + h, cx, cz);
-        tip.scale.y = 2.1;
-        flames.push(tip);
-      }
+      const flames = candles.map(([cx, cz, h]) => {
+        const flame = createFlame(seed++);
+        flame.object.position.set(cx, 1.245 + h, cz);
+        tower.add(flame.object);
+        return flame;
+      });
       const light = new THREE.PointLight(0xff8c2e, 9, 12, 1.8);
       light.position.set(0, 2.15, 0);
       tower.add(light);
       tower.position.set(x, 0, z);
-      tower.userData.light = light;
       scene.add(tower);
-      flames.push(tower);
+      towers.push({ flames, light });
     }
   }
+
   return (time) => {
-    flames.forEach((object, i) => {
-      const flicker = 1 + Math.sin(time * 9 + i * 1.7) * 0.07 + Math.sin(time * 23 + i * 4.1) * 0.05;
-      if (object.userData.light) object.userData.light.intensity = 9 * flicker;
-      else object.scale.set(1, 2.1 * flicker, 1);
-    });
+    for (const { flames, light } of towers) {
+      // The light follows the average of its own three flames.
+      let strength = 0;
+      let leanX = 0;
+      let leanZ = 0;
+      for (const flame of flames) {
+        const state = flame.update(time);
+        strength += state.strength / flames.length;
+        leanX += state.swayX / flames.length;
+        leanZ += state.swayZ / flames.length;
+      }
+      // Exaggerated a little, or the flicker would be lost on the stone.
+      light.intensity = 9 * Math.max(0.4, 1 + (strength - 1) * 1.6);
+      light.position.set(leanX * 2.5, 2.15 + (strength - 1) * 0.12, leanZ * 2.5);
+    }
   };
 }
 
