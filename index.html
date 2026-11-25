@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gothic Chess</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>♛</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <main id="stage" aria-label="3D chess board. Drag to rotate, scroll to zoom, click a piece and then a square to move."></main>
+
+  <aside id="panel">
+    <header>
+      <h1>Gothic Chess</h1>
+    </header>
+
+    <section id="status" aria-live="polite">
+      <p id="status-main"></p>
+      <p id="status-detail"></p>
+    </section>
+
+    <section class="captures">
+      <div><span>White has taken</span><output id="taken-w"></output></div>
+      <div><span>Black has taken</span><output id="taken-b"></output></div>
+    </section>
+
+    <section class="log">
+      <h2>Chronicle</h2>
+      <ol id="moves"></ol>
+    </section>
+
+    <section class="controls">
+      <button id="new-game">New game</button>
+      <button id="undo">Take back</button>
+      <button id="claim">Claim draw</button>
+      <button id="offer">Offer draw</button>
+      <button id="resign">Resign</button>
+      <button id="flip">Flip board</button>
+      <label><input type="checkbox" id="auto-turn"> Turn board after each move</label>
+    </section>
+
+    <p class="hint">Drag to rotate &middot; scroll to zoom &middot; right-drag to pan</p>
+  </aside>
+
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <h2 id="dialog-title"></h2>
+    <p id="dialog-text"></p>
+    <div id="dialog-actions"></div>
+  </dialog>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
