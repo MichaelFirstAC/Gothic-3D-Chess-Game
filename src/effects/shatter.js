@@ -247,5 +247,122 @@ export function createShatter({ effectsGroup, timeline, sound = () => {}, reduce
       });
     },
 
+    // The pawn cracks and falls into its square; fragments of the new piece
+    // rise from the ground around it and lock into place one by one.
+    promote({ pawn, crowned }) {
+      effectsGroup.add(pawn);
+      if (reduced()) {
+        return play(0.4, (keep) => {
+          const out = fade(pawn, keep, 1, 0);
+          const into = fade(crowned, keep, 0, 1);
+          return {
+            update(t) {
+              out(phase(t, 0, 0.25));
+              into(phase(t, 0.1, 0.4));
+            },
+            done() {
+              effectsGroup.remove(pawn);
+              crowned.visible = true;
+            },
+          };
+        });
+      }
+      return play(1.55, (keep) => {
+        crowned.visible = false;
+        const centre = pawn.position.clone();
+        const crumbs = dissolveFor(pawn, keep);
+        const stone = dissolveFor(crowned, keep);
+        stone.clipY = -0.001;
+        const flashes = [];
+        let bodies = null;
+        let parts = null;
+        let finished = null;
+        return {
+          update(t, dt) {
+            // Crack: a shudder, then the pieces give way.
+            if (t < 0.16) {
+              pawn.position.x = centre.x + Math.sin(t * 190) * 0.025 * phase(t, 0, 0.16);
+              return;
+            }
+            if (!bodies) {
+              pawn.position.copy(centre);
+              bodies = loosen(chunkMeshes(pawn, crumbs, keep), centre, 0, 0.45);
+              pawn.visible = false;
+              sound('crack');
+              parts = chunkMeshes(crowned, stone, keep);
+              // Lowest fragments lock first, so the piece is built from the ground.
+              const order = [...parts].sort((a, b) => a.home.y - b.home.y);
+              order.forEach((part, i) => {
+                part.start = 0.5 + (i / order.length) * 0.5;
+                const angle = Math.atan2(part.home.z - centre.z, part.home.x - centre.x) + range(-0.4, 0.4);
+                part.orbit = { angle, radius: range(0.55, 0.95), depth: range(-0.55, -0.15) };
+                part.turned = part.facing.clone().multiply(new THREE.Quaternion().setFromAxisAngle(part.axis, range(2, 5)));
+                part.mesh.visible = false;
+              });
+              sound('promote');
+            }
+            if (t < 0.5) tumble(bodies, dt);
+            else {
+              crumbs.clipY = -0.001;
+              for (const body of bodies) body.position.y -= dt * 0.9;
+              crumbs.amount = phase(t, 0.5, 0.95);
+            }
+            if (!finished) {
+              for (const part of parts) {
+                const p = phase(t, part.start, part.start + 0.3);
+                part.mesh.visible = t >= part.start;
+                if (!part.mesh.visible) continue;
+                const e = easeOut(p);
+                const dx = part.home.x - centre.x;
+                const dz = part.home.z - centre.z;
+                const swirl = part.orbit.angle + (1 - e) * 2.6;
+                const radius = THREE.MathUtils.lerp(part.orbit.radius, Math.hypot(dx, dz), e);
+                const final = Math.atan2(dz, dx);
+                // Blend the spiral into the exact resting place.
+                part.mesh.position.set(
+                  THREE.MathUtils.lerp(centre.x + Math.cos(swirl) * radius, centre.x + Math.cos(final) * radius, e * e),
+                  THREE.MathUtils.lerp(part.orbit.depth, part.home.y, e),
+                  THREE.MathUtils.lerp(centre.z + Math.sin(swirl) * radius, centre.z + Math.sin(final) * radius, e * e),
+                );
+                if (p === 1) part.mesh.position.copy(part.home);
+                part.mesh.quaternion.slerpQuaternions(part.turned, part.facing, e);
+                if (p === 1 && !part.snapped) {
+                  part.snapped = true;
+                  // A small flash as it locks.
+                  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: sparkMap(), color: 0xffc36b, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+                  }));
+                  flash.position.copy(part.home);
+                  effectsGroup.add(flash);
+                  keep(() => {
+                    effectsGroup.remove(flash);
+                    flash.material.dispose();
+                  });
+                  flashes.push({ flash, born: t });
+                }
+              }
+              if (t >= 1.3) {
+                // Every fragment is home: show the whole piece and let it glow.
+                for (const part of parts) part.holder.visible = false;
+                finished = borrow(crowned, keep);
+                crowned.visible = true;
+              }
+            }
+            if (finished) finished.glow = 1.1 * Math.sin(Math.PI * phase(t, 1.3, 1.55));
+            for (const { flash, born } of flashes) {
+              const age = (t - born) / 0.18;
+              flash.visible = age < 1;
+              flash.scale.setScalar(0.12 + 0.22 * age);
+              flash.material.opacity = 0.85 * Math.max(0, 1 - age);
+            }
+          },
+          done() {
+            effectsGroup.remove(pawn);
+            crowned.visible = true;
+          },
+        };
+      });
+    },
+
   };
 }

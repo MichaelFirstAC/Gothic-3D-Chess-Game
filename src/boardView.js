@@ -149,12 +149,7 @@ export function createBoardView({ scene, makePiece, sound = () => {}, reducedMot
     if (move.promotion) {
       pieces.remove(mover);
       const piece = colorOf(move.piece) === 'w' ? move.promotion.toUpperCase() : move.promotion;
-      const crowned = place(piece, move.to);
-      await timeline.run({
-        duration: 0.42,
-        update(t) { crowned.scale.setScalar(0.3 + 0.7 * (t / 0.42)); },
-        end() { crowned.scale.setScalar(1); },
-      });
+      await shatter.promote({ pawn: mover, crowned: place(piece, move.to) });
     }
     return { settled };
   }
