@@ -3,7 +3,8 @@
 // ribbed vaults. Repeated parts are built once and instanced.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ashlar, flagstones, lancetGlass, roseGlass, shaftTexture, glowTexture } from './textures.js';
+import { flagstones, lancetGlass, roseGlass, shaftTexture, glowTexture } from './textures.js';
+import { stoneMaterial } from './stoneMaterial.js';
 
 export const FLOOR_Y = -0.8;
 // Half-width of nave and transepts. The camera never travels farther out than
@@ -27,45 +28,7 @@ const WALL_TOP = 34;
 
 // ---------------------------------------------------------------- helpers
 
-// World-sized texture coordinates, projected along each face's main axis, so
-// stone blocks keep one scale on every part.
-function stoneUVs(geometry, tile = 6) {
-  const g = geometry.index ? geometry.toNonIndexed() : geometry;
-  const position = g.attributes.position;
-  const uv = new Float32Array(position.count * 2);
-  const corner = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  const normal = new THREE.Vector3();
-  const edge = new THREE.Vector3();
-  for (let i = 0; i < position.count; i += 3) {
-    corner.forEach((v, k) => v.fromBufferAttribute(position, i + k));
-    normal.subVectors(corner[1], corner[0]).cross(edge.subVectors(corner[2], corner[0]));
-    const [x, y, z] = [Math.abs(normal.x), Math.abs(normal.y), Math.abs(normal.z)];
-    corner.forEach((v, k) => {
-      const flat = y > x && y > z;
-      uv[(i + k) * 2] = (flat ? v.x : x > z ? v.z : v.x) / tile;
-      uv[(i + k) * 2 + 1] = (flat ? v.z : v.y) / tile;
-    });
-  }
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  return g;
-}
-
-// Candle soot and damp: the stone darkens with height.
-function addSoot(geometry) {
-  const position = geometry.attributes.position;
-  const colors = new Float32Array(position.count * 3);
-  for (let i = 0; i < position.count; i++) {
-    const y = position.getY(i);
-    const soot = THREE.MathUtils.smoothstep(y, 12, VAULT_APEX);
-    const damp = 1 - THREE.MathUtils.smoothstep(y, 0, 2.5);
-    const light = 1 - soot * 0.72 - damp * 0.22;
-    colors.set([light, light * (1 - soot * 0.06), light * (1 - soot * 0.1)], i * 3);
-  }
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  return geometry;
-}
-
-const stoneGeometry = (parts) => addSoot(stoneUVs(mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)))));
+const stoneGeometry = (parts) => mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 
 const cylinder = (top, bottom, y0, y1, sides, x = 0, z = 0) =>
   new THREE.CylinderGeometry(top, bottom, y1 - y0, sides, 1, true).translate(x, (y0 + y1) / 2, z);
@@ -341,12 +304,7 @@ export function addCathedral(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  const textures = ashlar();
-  // Matte stone: no specular highlight and no reflection, so nothing reads as metal.
-  const stone = new THREE.MeshLambertMaterial({
-    map: textures.map, normalMap: textures.normalMap, vertexColors: true, color: 0xc6bbae, reflectivity: 0,
-  });
-  stone.normalScale.set(0.9, 0.9);
+  const stone = stoneMaterial({ color: 0xc6bbae });
   const dark = new THREE.MeshBasicMaterial({ color: 0x07050a });
 
   addFloor(group, flagstones());
