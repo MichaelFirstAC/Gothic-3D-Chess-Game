@@ -1,5 +1,5 @@
-// The setting: marble board, carved frame, candle towers and lighting. The
-// building around them is in cathedral.js.
+// The setting: marble board, carved frame, candle towers and lighting. The rock
+// they stand on is in pillar.js and the building around them in cathedral.js.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isKnightShift, knightArrowOutline } from './effects/arrowShape.js';
@@ -7,6 +7,8 @@ import { canvasTexture, marble } from './textures.js';
 import { addCathedral } from './cathedral.js';
 import { createCandelabra } from './candelabrum.js';
 import { addFrame } from './frame.js';
+import { addPillar } from './pillar.js';
+import { createAbyssAir } from './abyssAir.js';
 import { createQualityGovernor } from './quality.js';
 
 export const squarePosition = (sq) => new THREE.Vector3((sq & 7) - 3.5, 0, 3.5 - (sq >> 3));
@@ -130,7 +132,7 @@ export function createScene(container) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07050b);
+  scene.background = new THREE.Color(0x000000);
   scene.fog = new THREE.FogExp2(0x0a0710, 0.017);
 
   // Reflections for the pieces and the polished squares. The stone of the
@@ -162,6 +164,12 @@ export function createScene(container) {
   const orientLabels = addBoard(scene, scene.environment);
   const flickerCandles = addCandleTowers(scene, scene.environment);
   const cathedral = addCathedral(scene);
+  addPillar(scene);
+  const air = createAbyssAir(scene);
+  // A faint cold light welling up from the chasm picks out the rock's shape.
+  const updraught = new THREE.DirectionalLight(0x4a5c9c, 0.55);
+  updraught.position.set(3, -8, 5);
+  scene.add(updraught);
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 260);
 
@@ -175,6 +183,7 @@ export function createScene(container) {
       moon.shadow.map = null;
     }
     cathedral.setShafts(level < 2);
+    air.setVisible(level < 2);
     moon.castShadow = level < 3;
   }, qualityOptions());
 
@@ -183,7 +192,7 @@ export function createScene(container) {
   let shift = 0;
   const raiseView = () => {
     const polar = Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1));
-    const next = THREE.MathUtils.smoothstep(polar, 0.9, 1.44) * 0.3;
+    const next = THREE.MathUtils.smoothstep(polar, 1.05, 1.52) * 0.16;
     const { clientWidth: width, clientHeight: height } = container;
     if (!width || !height || (Math.abs(next - shift) < 0.0005 && camera.view?.fullHeight === height)) return;
     shift = next;
@@ -195,6 +204,7 @@ export function createScene(container) {
     update(time, elapsed) {
       quality.frame(elapsed);
       flickerCandles(time);
+      air.update(time);
       orientLabels(camera.position.z);
       raiseView();
     },

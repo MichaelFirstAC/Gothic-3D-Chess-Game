@@ -4,6 +4,7 @@
 // with the texture's.
 import * as THREE from 'three';
 import { stoneWall, noiseTexture } from './textures.js';
+import { addAbyssFog } from './abyssFog.js';
 
 // World units covered by one stone texture.
 const TILE = 17;
@@ -111,9 +112,8 @@ function textures() {
 }
 
 // Matte stone: no specular highlight and no reflection, so nothing reads as metal.
-// `extend(shader)` may add further changes, under its own cache `key`.
-export function stoneMaterial({ color = 0xffffff, extend, key = '', ...options } = {}) {
-  const material = new THREE.MeshLambertMaterial({ color, reflectivity: 0, ...options });
+export function stoneMaterial({ color = 0xffffff } = {}) {
+  const material = new THREE.MeshLambertMaterial({ color, reflectivity: 0 });
   const uniforms = textures();
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -124,8 +124,8 @@ export function stoneMaterial({ color = 0xffffff, extend, key = '', ...options }
       .replace('#include <common>', `#include <common>\n${FRAGMENT_HEAD}`)
       .replace('#include <map_fragment>', FRAGMENT_COLOUR)
       .replace('#include <normal_fragment_maps>', FRAGMENT_RELIEF);
-    extend?.(shader);
+    addAbyssFog(shader);
   };
-  material.customProgramCacheKey = () => `cathedral-stone${key}`;
+  material.customProgramCacheKey = () => 'cathedral-stone';
   return material;
 }

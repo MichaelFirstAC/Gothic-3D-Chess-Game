@@ -7,7 +7,7 @@ import { createScene, createHighlights, createBestMoveArrow, squarePosition } fr
 import { createBoardView } from './boardView.js';
 import { createAudio, resultSound } from './audio.js';
 import { createReviewMode } from './reviewMode.js';
-import { createKeyTracker, steerCamera } from './keyCamera.js';
+import { createKeyTracker, steerCamera, clampTarget } from './keyCamera.js';
 import { openImportDialog } from './importDialog.js';
 
 const NAMES = { w: 'White', b: 'Black' };
@@ -65,21 +65,34 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 6;
 controls.maxDistance = 21;
-controls.maxPolarAngle = Math.PI * 0.46;
+// Low enough to look past the rim into the drop, but never under the top.
+controls.maxPolarAngle = Math.PI * 0.49;
 controls.target.set(0, 0, 0);
 
 let viewSide = 'w';
 let cameraMoved = false;
 controls.addEventListener('start', () => { cameraMoved = true; });
 
-// Distance at which the whole board fits the current viewport shape.
-const homeDistance = () => Math.min(controls.maxDistance, 13.6 * Math.max(1, 1.12 / camera.aspect));
+// Far enough back to show the board on its pillar with the candles at its
+// corners, and farther still where a narrow viewport needs it for the width.
+const homeDistance = () => Math.min(controls.maxDistance, Math.max(20, 13.6 * (1.12 / camera.aspect)));
 
 function homeCamera() {
-  const polar = 0.64;
+  const polar = 0.98;
   const distance = homeDistance();
+  controls.target.set(0, 0, 0);
   camera.position.set(0, Math.cos(polar) * distance, Math.sin(polar) * distance * (viewSide === 'w' ? 1 : -1));
   controls.update();
+}
+
+// Applied after every camera move, so panning stays within bounds.
+function keepInBounds() {
+  const kept = clampTarget(controls.target);
+  const back = new THREE.Vector3(kept.x, kept.y, kept.z).sub(controls.target);
+  if (back.lengthSq() === 0) return;
+  controls.target.add(back);
+  camera.position.add(back);
+  camera.lookAt(controls.target);
 }
 
 function turnCamera(side) {
@@ -574,6 +587,7 @@ renderer.setAnimationLoop((now) => {
     // A long gap between frames must not fling the camera.
     steerFromKeys(Math.min(elapsed, 50) / 1000);
     controls.update();
+    keepInBounds();
   }
   update(now / 1000, elapsed);
   highlights.pulse(now / 1000);

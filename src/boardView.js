@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { colorOf } from './engine.js';
 import { squarePosition } from './scene.js';
+import { gravePosition } from './pillarShape.js';
 import { createTimeline, easeInOut, phase } from './effects/timeline.js';
 import { createShatter } from './effects/shatter.js';
 import { fracturePiece } from './effects/fracture.js';
@@ -19,7 +20,7 @@ function rookShift(move) {
   return { from: short ? move.to + 1 : move.to - 2, to: short ? move.to - 1 : move.to + 1 };
 }
 
-// Captured pieces stand in two rows beside the board, on their captor's side.
+// Captured pieces stand in two rows on the rock ledge on their captor's side.
 export function graveyardSlots(history) {
   const counts = { w: 0, b: 0 };
   const slots = [];
@@ -31,7 +32,7 @@ export function graveyardSlots(history) {
     slots.push({
       key: `${captor}${index}${move.captured}`,
       piece: move.captured,
-      position: [side * (5.35 + Math.floor(index / 8) * 0.55), -0.8, side * (3.6 - (index % 8) * 0.6)],
+      position: gravePosition(side, index),
     });
   }
   return slots;

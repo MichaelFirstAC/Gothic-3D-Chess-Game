@@ -93,112 +93,6 @@ function normalFromHeight(heights, strength) {
   return asTexture(canvas, THREE.NoColorSpace);
 }
 
-// Draws something four times over so that it wraps across the tile edges.
-function wrapped(size, x, y, paint) {
-  for (const dx of [-size, 0, size]) {
-    for (const dy of [-size, 0, size]) paint(x + dx, y + dy);
-  }
-}
-
-// Coursed stone blocks, drawn twice: once for colour, once for relief.
-function masonry({ size, rows, minWidth, maxWidth, mortar, tones, mortarColor, seed, streaks, wear }) {
-  const random = seededRandom(seed);
-  const rowHeight = size / rows;
-  const blocks = [];
-  for (let row = 0; row < rows; row++) {
-    const widths = [];
-    let used = 0;
-    while (used < size) {
-      const width = Math.min(minWidth + random() * (maxWidth - minWidth), size - used);
-      widths.push(width);
-      used += width;
-    }
-    // A sliver at the end of a course is merged into its neighbour.
-    if (widths.length > 1 && widths.at(-1) < minWidth * 0.6) widths[widths.length - 2] += widths.pop();
-    const offset = random() * size;
-    let x = offset;
-    for (const width of widths) {
-      blocks.push({
-        x: x % size, y: row * rowHeight, width, height: rowHeight,
-        tone: tones[Math.floor(random() * tones.length)], lift: random(),
-      });
-      x += width;
-    }
-  }
-
-  const specks = Array.from({ length: wear }, () => ({
-    x: random() * size, y: random() * size, r: 0.6 + random() * 2.4, dark: random() > 0.35, alpha: 0.1 + random() * 0.25,
-  }));
-  const stains = Array.from({ length: 70 }, () => ({
-    x: random() * size, y: random() * size, r: 20 + random() * 90, dark: random() > 0.3,
-  }));
-  const drips = Array.from({ length: streaks }, () => ({
-    x: random() * size, y: random() * size, width: 2 + random() * 14, length: 60 + random() * 300,
-    alpha: 0.1 + random() * 0.28,
-  }));
-
-  const eachBlock = (paint) => {
-    for (const block of blocks) {
-      for (const dx of [-size, 0, size]) paint({ ...block, x: block.x + dx });
-    }
-  };
-
-  const color = makeCanvas(size, size, (ctx) => {
-    ctx.fillStyle = mortarColor;
-    ctx.fillRect(0, 0, size, size);
-    eachBlock((b) => {
-      ctx.fillStyle = b.tone;
-      ctx.fillRect(b.x + mortar / 2, b.y + mortar / 2, b.width - mortar, b.height - mortar);
-    });
-    for (const { x, y, r, dark } of stains) {
-      wrapped(size, x, y, (px, py) => {
-        const g = ctx.createRadialGradient(px, py, 0, px, py, r);
-        g.addColorStop(0, dark ? 'rgba(10,8,6,0.22)' : 'rgba(215,205,180,0.1)');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(px - r, py - r, r * 2, r * 2);
-      });
-    }
-    for (const { x, y, r, dark, alpha } of specks) {
-      ctx.fillStyle = dark ? `rgba(20,16,12,${alpha})` : `rgba(230,220,198,${alpha * 0.6})`;
-      ctx.fillRect(x, y, r, r);
-    }
-    for (const { x, y, width, length, alpha } of drips) {
-      wrapped(size, x, y, (px, py) => {
-        const g = ctx.createLinearGradient(0, py, 0, py + length);
-        g.addColorStop(0, `rgba(12,10,8,${alpha})`);
-        g.addColorStop(1, 'rgba(12,10,8,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(px, py, width, length);
-      });
-    }
-  });
-
-  const relief = makeCanvas(size, size, (ctx) => {
-    ctx.fillStyle = '#303030';
-    ctx.fillRect(0, 0, size, size);
-    eachBlock((b) => {
-      const level = Math.round(165 + b.lift * 40);
-      // Stepped insets round off the edge of each block.
-      for (let step = 0; step < 4; step++) {
-        const inset = mortar / 2 + step * 1.5;
-        const shade = Math.round(level * (0.7 + step * 0.1));
-        ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
-        ctx.fillRect(b.x + inset, b.y + inset, b.width - inset * 2, b.height - inset * 2);
-      }
-    });
-    for (const { x, y, r, dark } of specks) {
-      ctx.fillStyle = dark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.25)';
-      ctx.fillRect(x, y, r * 1.4, r * 1.4);
-    }
-  });
-
-  const map = asTexture(color);
-  const normalMap = normalFromHeight(relief, 3.2);
-  for (const texture of [map, normalMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  return { map, normalMap };
-}
-
 const STONE_TONES = ['#8d8478', '#7f776c', '#978d7e', '#746d65', '#888075', '#9a9285', '#827a6a', '#908a82'];
 
 // Weathered ashlar walling: courses of uneven height, some stones two courses
@@ -365,12 +259,6 @@ export function noiseTexture(seed = 5, size = 256, cells = 8) {
   return texture;
 }
 
-// Large worn floor flags.
-export const flagstones = () => masonry({
-  size: 512, rows: 4, minWidth: 110, maxWidth: 230, mortar: 6, seed: 977, streaks: 0, wear: 9000,
-  tones: ['#6f6962', '#625d57', '#776f66', '#59544f', '#6a645e'], mortarColor: '#2a2622',
-});
-
 const JEWELS = ['#8d1630', '#1f3f98', '#60207f', '#106350', '#b27f1c', '#7a2d12', '#2a62a8'];
 
 // Leaded lights for a tall window: a lattice of coloured panes with medallions.
@@ -462,34 +350,102 @@ export function roseGlass() {
   });
 }
 
-// Pale, pitted limestone.
-export function limestone(seed, size = 512) {
+// Bare rock: lumps and grain at many sizes, split by fine cracks. Tiles in both
+// directions. Returns a colour map and a relief map.
+export function rockSurface(seed, size = 1024) {
   const random = seededRandom(seed);
-  return canvasTexture(size, (ctx) => {
-    ctx.fillStyle = '#8f8576';
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 380; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const r = 8 + random() * 55;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      const tone = random();
-      g.addColorStop(0, tone < 0.4 ? 'rgba(50,42,32,0.2)' : tone < 0.75 ? 'rgba(215,202,174,0.17)' : 'rgba(120,100,70,0.18)');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  const lattice = Float32Array.from({ length: 65536 }, () => random());
+  // Smooth tiling noise: `cells` lumps across the texture.
+  const value = (x, y, cells, salt) => {
+    const gx = (x / size) * cells;
+    const gy = (y / size) * cells;
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const at = (i, j) => lattice[(((j % cells) * 251 + (i % cells) * 13 + salt * 977) & 65535)];
+    const fx = gx - x0;
+    const fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
+    const bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
+    return top + (bottom - top) * sy;
+  };
+  // Scattered points that divide the surface into broken faces, each tipped its
+  // own way. `cells` of them cross the texture.
+  const facets = (cells) => {
+    const points = Array.from({ length: cells * cells }, (_, i) => ({
+      x: (i % cells) + random(), y: Math.floor(i / cells) + random(),
+      tiltX: random() - 0.5, tiltY: random() - 0.5, lift: random(),
+    }));
+    return (x, y) => {
+      const gx = (((x / size) * cells) % cells + cells) % cells;
+      const gy = (((y / size) * cells) % cells + cells) % cells;
+      let near = 9;
+      let next = 9;
+      let face = 0;
+      for (let j = -1; j <= 1; j++) {
+        for (let i = -1; i <= 1; i++) {
+          const cx = Math.floor(gx) + i;
+          const cy = Math.floor(gy) + j;
+          const p = points[((cy + cells) % cells) * cells + ((cx + cells) % cells)];
+          const dx = p.x + (cx < 0 ? -cells : cx >= cells ? cells : 0) - gx;
+          const dy = p.y + (cy < 0 ? -cells : cy >= cells ? cells : 0) - gy;
+          const d = Math.hypot(dx, dy);
+          if (d < near) {
+            next = near;
+            near = d;
+            face = p.lift + dx * p.tiltX * 1.3 + dy * p.tiltY * 1.3;
+          } else if (d < next) next = d;
+        }
+      }
+      return { face, edge: next - near };
+    };
+  };
+  const large = facets(7);
+  const small = facets(23);
+  const heights = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // A little warping keeps the breaks from running dead straight.
+      const wx = x + (value(x, y, 13, 1) - 0.5) * 46;
+      const wy = y + (value(x, y, 13, 2) - 0.5) * 46;
+      let lumps = 0;
+      let amplitude = 0.5;
+      for (let octave = 0; octave < 4; octave++) {
+        lumps += value(x, y, 16 << octave, 3 + octave) * amplitude;
+        amplitude *= 0.58;
+      }
+      const a = large(wx, wy);
+      const b = small(wx, wy);
+      // Cracks follow some of the larger breaks and then die out.
+      const open = Math.max(0, value(x, y, 6, 11) * 2.6 - 1.25);
+      const crack = Math.max(0, 1 - a.edge * 22) * Math.min(1, open);
+      heights[y * size + x] = 0.06 + lumps * 0.55 + a.face * 0.13 + b.face * 0.1
+        - crack * 0.2 + (random() - 0.5) * 0.09;
     }
-    for (let i = 0; i < 5200; i++) {
-      ctx.fillStyle = random() < 0.65
-        ? `rgba(35,28,20,${0.2 + random() * 0.4})` : `rgba(232,222,200,${0.15 + random() * 0.25})`;
-      ctx.beginPath();
-      ctx.arc(random() * size, random() * size, 0.4 + random() ** 3 * 2.8, 0, Math.PI * 2);
-      ctx.fill();
+  }
+  const paint = (shade) => makeCanvas(size, size, (ctx) => {
+    const image = ctx.createImageData(size, size);
+    for (let i = 0; i < heights.length; i++) {
+      image.data.set(shade(heights[i], i), i * 4);
     }
+    ctx.putImageData(image, 0, 0);
   });
+  const byte = (v) => Math.max(0, Math.min(255, v));
+  const color = paint((h) => {
+    const tone = byte(4 + h * 232);
+    return [tone, tone * 0.965, tone * 0.93, 255];
+  });
+  const relief = paint((h) => {
+    const level = byte(h * 255);
+    return [level, level, level, 255];
+  });
+  const map = asTexture(color);
+  const normalMap = normalFromHeight(relief, 2.4);
+  for (const texture of [map, normalMap]) texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return { map, normalMap };
 }
 
-// White with soft edges; `fade` makes it thin out toward the bottom.
 export function shaftTexture() {
   return paintedTexture(128, 256, (ctx, width, height) => {
     const image = ctx.createImageData(width, height);

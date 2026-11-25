@@ -32,6 +32,17 @@ export function steerCamera({ radius, phi, theta }, held, seconds, { minDistance
   };
 }
 
+// Panning may move the point the camera circles only this far. With the tilt
+// limit, that keeps the camera above the top of the pillar and inside the walls.
+export const PAN_LIMIT = { radius: 3, minY: 0, maxY: 3 };
+
+// Where the camera's target { x, y, z } is allowed to be.
+export function clampTarget({ x, y, z }, { radius, minY, maxY } = PAN_LIMIT) {
+  const out = Math.hypot(x, z);
+  const keep = out > radius ? radius / out : 1;
+  return { x: x * keep, y: clamp(y, minY, maxY), z: z * keep };
+}
+
 // True when a key press belongs to something else, such as typing a username.
 export function isTyping(target) {
   if (!target) return false;
