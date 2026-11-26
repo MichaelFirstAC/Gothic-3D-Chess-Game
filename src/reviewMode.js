@@ -10,9 +10,9 @@ import { fetchCommentary } from './analysis/commentary.js';
 import { narrateReview } from './analysis/narrator.js';
 
 const NAMES = { w: 'White', b: 'Black' };
-const MARKS = { best: '★', good: '', inaccuracy: '?!', mistake: '?', blunder: '??' };
+const MARKS = { brilliant: '!!', best: '★', good: '', inaccuracy: '?!', mistake: '?', blunder: '??' };
 const LABELS = {
-  best: 'Best move', good: 'Good move', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
+  brilliant: 'Brilliant', best: 'Best move', good: 'Good move', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +21,16 @@ const $ = (id) => document.getElementById(id);
 function searchDepth() {
   const wanted = Number(new URLSearchParams(window.location.search).get('depth'));
   return Number.isInteger(wanted) && wanted >= 6 && wanted <= 22 ? wanted : DEFAULT_DEPTH;
+}
+
+// The engine's move where it is worth showing beside the one played.
+const better = (rated) => (['brilliant', 'best'].includes(rated.classification) ? null : rated.best);
+
+// One entry of the key to what is marked on the board.
+function keyEntry(kind, text) {
+  const entry = element('span', `arrow-key ${kind}`);
+  entry.append(element('i'), text);
+  return entry;
 }
 
 function element(tag, className, text) {
@@ -47,14 +57,16 @@ export function createReviewMode(view) {
     const state = stateAt(cursor);
     const marks = [];
     const last = session.record.history[cursor - 1];
-    if (last) marks.push({ square: last.move.from, style: 'last' }, { square: last.move.to, style: 'last' });
+    if (last) marks.push({ square: last.move.from, style: 'played' }, { square: last.move.to, style: 'played' });
     if (inCheck(state)) {
       marks.push({ square: state.board.indexOf(state.turn === 'w' ? 'K' : 'k'), style: 'check' });
     }
     view.mark(marks);
-    // The arrow shows what the engine would have played for the move on screen
-    // (before the first move, what it suggests as the opening move).
-    view.arrow(review?.moves[Math.max(0, cursor - 1)]?.best ?? null);
+    // The squares above show the move made. The arrow is for what the engine
+    // would rather have seen, unless the move was approved as it stood (before
+    // the first move, it is the engine's suggested opening).
+    const rated = review?.moves[Math.max(0, cursor - 1)];
+    view.arrow((cursor ? rated && better(rated) : rated?.best) ?? null);
   }
 
   // Walks the pieces to the cursor: a single step either way is animated, and
@@ -86,7 +98,12 @@ export function createReviewMode(view) {
   function goTo(ply) {
     if (!session) return;
     const next = Math.max(0, Math.min(total(), ply));
-    if (next === session.cursor) return;
+    // Stepping through the game is read against the move list.
+    session.tab = 'moves';
+    if (next === session.cursor) {
+      renderPanel();
+      return;
+    }
     session.cursor = next;
     renderBoard();
     renderPanel();
@@ -150,24 +167,63 @@ export function createReviewMode(view) {
     }) : []));
   }
 
-  function renderVerdict() {
-    const { cursor, review } = session;
-    const rated = review?.moves[cursor - 1];
-    const lines = [];
-    if (rated) {
-      const number = `${rated.moveNumber}${rated.color === 'w' ? '.' : '…'}`;
-      lines.push(element('p', `verdict-title ${rated.classification}`,
-        `${number} ${rated.san}: ${LABELS[rated.classification]}`));
-      if (rated.best && rated.classification !== 'best') {
-        lines.push(element('p', 'verdict-detail', `Green arrow: ${rated.best.san}`));
-      }
-    } else if (review) {
-      lines.push(element('p', 'verdict-detail', 'Step through the game with the arrow keys, or choose a move.'));
-    }
-    $('verdict').replaceChildren(...lines);
+  // How many moves of each kind each side made: White, the kind, Black.
+  function renderTally() {
+    const { review } = session;
+    $('tally').replaceChildren(...(review ? Object.entries(LABELS) : []).map(([kind, label]) => {
+      const row = element('div', kind);
+      const count = (color) => review.moves.filter((m) => m.color === color && m.classification === kind).length;
+      row.append(
+        element('strong', '', String(count('w'))),
+        element('span', '', label),
+        element('strong', '', String(count('b'))),
+      );
+      return row;
+    }));
   }
 
-  // The comment on the move shown, and the three lessons at the end.
+  // One of the two lower views: the move list, or the verdict on the whole game.
+  function renderTabs() {
+    const report = session.tab === 'report' && Boolean(session.review);
+    $('moves').hidden = report;
+    $('report').hidden = !report;
+    $('tab-moves').setAttribute('aria-selected', String(!report));
+    $('tab-report').setAttribute('aria-selected', String(report));
+    $('tab-report').disabled = !session.review;
+  }
+
+  function renderVerdict() {
+    const { cursor, review, commentary } = session;
+    const rated = review?.moves[cursor - 1];
+    const head = [];
+    const after = [];
+    if (rated) {
+      const number = `${rated.moveNumber}${rated.color === 'w' ? '.' : '…'}`;
+      const title = element('p', `verdict-title ${rated.classification}`,
+        `${number} ${rated.san}: ${LABELS[rated.classification]}`);
+      const row = element('div', 'verdict-head');
+      row.append(title, element('span', 'verdict-score', formatScore(rated.whiteAfter)));
+      head.push(row);
+      const key = element('p', 'arrow-keys');
+      key.append(keyEntry('played', `Played ${rated.san}`));
+      const other = better(rated);
+      if (other) key.append(keyEntry('best', `Engine's choice ${other.san}`));
+      after.push(key);
+      if (commentary?.aiPlies.has(cursor)) {
+        after.push(element('p', 'verdict-detail', 'Explained by AI (via Groq). It can get the chess wrong.'));
+      }
+    } else if (review) {
+      head.push(element('p', 'verdict-detail', 'Step through the game with the arrow keys, or choose a move.'));
+    }
+    $('verdict').replaceChildren(...head);
+    $('verdict-extra').replaceChildren(...after);
+    $('insight').dataset.kind = rated?.classification ?? '';
+    // Nothing to say yet while the engine is still at work. The verdict on the
+    // whole game has the panel to itself.
+    $('insight').hidden = !review || session.tab === 'report';
+  }
+
+  // The comment on the move shown, and the game's three lessons.
   function renderCommentary() {
     const { cursor, commentary } = session;
     const text = commentary?.moments.get(cursor) || '';
@@ -176,7 +232,7 @@ export function createReviewMode(view) {
       $('insight').scrollTop = 0;
     }
 
-    const summary = cursor === total() ? commentary?.summary : null;
+    const summary = commentary?.summary;
     $('summary').hidden = !summary?.length;
     $('summary-list').replaceChildren(...(summary || []).map((line) => element('li', '', line)));
 
@@ -246,9 +302,13 @@ export function createReviewMode(view) {
     $('cancel-review').hidden = Boolean(error);
 
     renderAccuracy();
-    renderMoves();
+    renderTally();
+    renderTabs();
     renderVerdict();
     renderCommentary();
+    // Last, because it scrolls the list to the move shown: by now the list is
+    // showing, and the comment above it has taken the height it is going to.
+    renderMoves();
     renderEval();
     $('step-first').disabled = $('step-back').disabled = cursor === 0;
     $('step-next').disabled = $('step-last').disabled = cursor === total();
@@ -299,6 +359,7 @@ export function createReviewMode(view) {
       commentary: null,
       progress: '',
       error: '',
+      tab: 'moves',
       controller: new AbortController(),
     };
     session = own;
@@ -314,6 +375,9 @@ export function createReviewMode(view) {
       if (session !== own) return;
       own.review = review;
       own.progress = '';
+      // The verdict on the whole game comes first, unless it is being stepped
+      // through already.
+      if (own.cursor === 0) own.tab = 'report';
       renderBoard();
       renderPanel();
       await narrate(own);
@@ -331,7 +395,11 @@ export function createReviewMode(view) {
     session.controller.abort();
     session = null;
     document.body.classList.remove('reviewing');
-    for (const id of ['accuracy', 'verdict', 'explanation', 'summary-list', 'commentary-note']) $(id).replaceChildren();
+    for (const id of ['accuracy', 'tally', 'verdict', 'explanation', 'verdict-extra', 'summary-list',
+      'commentary-note']) $(id).replaceChildren();
+    // The live game's move list is shown again, whichever tab was left open.
+    $('moves').hidden = false;
+    $('report').hidden = true;
     $('summary').hidden = true;
     $('progress').hidden = true;
     $('eval-bar').hidden = true;
@@ -345,11 +413,18 @@ export function createReviewMode(view) {
   $('step-back').addEventListener('click', () => goTo(session.cursor - 1));
   $('step-next').addEventListener('click', () => goTo(session.cursor + 1));
   $('step-last').addEventListener('click', () => goTo(total()));
+  for (const tab of ['moves', 'report']) {
+    $(`tab-${tab}`).addEventListener('click', () => {
+      session.tab = tab;
+      renderPanel();
+    });
+  }
   $('exit-review').addEventListener('click', close);
   $('cancel-review').addEventListener('click', close);
 
   window.addEventListener('keydown', (event) => {
-    if (!session || event.altKey || event.ctrlKey || event.metaKey || $('dialog').open) return;
+    if (!session || event.altKey || event.ctrlKey || event.metaKey
+        || document.querySelector('dialog[open]')) return;
     const target = {
       ArrowLeft: () => session.cursor - 1,
       ArrowRight: () => session.cursor + 1,

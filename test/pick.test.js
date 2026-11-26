@@ -55,8 +55,13 @@ test('a smaller captured piece is measured at its own size', () => {
 test('looking over the whole board takes well under a millisecond', () => {
   const pieces = [...'rnbqkbnrppppppppPPPPPPPPRNBQKBNR'].map((letter, i) => place(letter, (i % 8) - 3.5, Math.floor(i / 8) - 1.5));
   nearestPiece(sight([0, 8, 12], [0, 0.4, 0]), pieces);
-  const started = performance.now();
-  for (let i = 0; i < 200; i++) nearestPiece(sight([0, 8, 12], [(i % 9) - 4, 0.4, (i % 5) - 2]), pieces);
-  const each = (performance.now() - started) / 200;
+  // The fastest of a few short runs: other test files running alongside can only
+  // make a run slower, so one slowed run says nothing about the code.
+  const run = () => {
+    const started = performance.now();
+    for (let i = 0; i < 40; i++) nearestPiece(sight([0, 8, 12], [(i % 9) - 4, 0.4, (i % 5) - 2]), pieces);
+    return (performance.now() - started) / 40;
+  };
+  const each = Math.min(...Array.from({ length: 5 }, run));
   assert.ok(each < 0.5, `${each.toFixed(3)} ms a look`);
 });

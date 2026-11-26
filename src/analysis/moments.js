@@ -19,7 +19,7 @@ export function gamePhase(fen) {
 // side. `side` is 'w', 'b', or null to review both. Returned in game order.
 export function selectKeyMoments(moves, { side = null, limit = MAX_MOMENTS } = {}) {
   // Moves the engine approved of are never put forward for explanation.
-  const flagged = moves.filter((m) => m.classification !== 'best' && m.classification !== 'good');
+  const flagged = moves.filter((m) => !['brilliant', 'best', 'good'].includes(m.classification));
   const bySwing = [...flagged].sort((a, b) => b.drop - a.drop);
   const errors = flagged
     .filter((m) => (!side || m.color === side)

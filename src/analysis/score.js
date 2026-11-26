@@ -34,8 +34,18 @@ export function winDrop(before, after) {
   return Math.max(0, winPercent(scoreCp(before)) - winPercent(scoreCp(after)));
 }
 
-// Both scores are from the mover's point of view.
-export function classify({ isBest, before, after }) {
+// A sacrifice is only brilliant if it leaves its side at least about level.
+const SOUND = 45; // percent winning chance
+
+// Both scores are from the mover's point of view. `sacrifice` says that the move
+// gives up material on purpose.
+export function classify({ isBest, before, after, sacrifice = false }) {
+  const rating = judge({ isBest, before, after });
+  const approved = rating === 'best' || rating === 'good';
+  return sacrifice && approved && winPercent(scoreCp(after)) >= SOUND ? 'brilliant' : rating;
+}
+
+function judge({ isBest, before, after }) {
   if (isBest) return 'best';
   const hadMate = isMate(before) && before.wins;
   const keptMate = isMate(after) && after.wins;

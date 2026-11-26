@@ -3,6 +3,7 @@
 import { applyMove, inCheck, legalMoves, moveToUci, toFen, toSan, uciToMove } from '../engine.js';
 import { abortError } from './stockfish.js';
 import { accuracy, classify, flipScore, fromEngine, moveAccuracy, winDrop } from './score.js';
+import { sacrificeOf } from './sacrifice.js';
 
 const LINE_LENGTH = 6; // half-moves of each engine line that are kept
 const AUTOMATIC_DRAW = /dead position|fivefold|seventy-five/;
@@ -70,7 +71,7 @@ export async function reviewGame({ history, finalState, result = null }, { evalu
       whiteAfter: white ? after : flipScore(after),
       drop,
       accuracy: moveAccuracy(drop),
-      classification: classify({ isBest, before, after }),
+      classification: classify({ isBest, before, after, sacrifice: sacrificeOf(state, move) > 0 }),
       best: best && { from: best.from, to: best.to, san: toSan(state, best) },
       bestLine: lineToSan(state, current.pv),
       replyLine: lineToSan(applyMove(state, move), next.pv),

@@ -658,6 +658,23 @@ export const PRAISE = {
   ],
 };
 
+// A sacrifice the engine approves of. That much has been checked, and no more:
+// these must not say how it pays off.
+export const BRILLIANT = [
+  "{move} offers the {piece}, and the engine finds the offer sound. Magnificent.",
+  "A true sacrifice: {move} puts the {piece} where it can be taken, and it holds up.",
+  "{side} gives up material with {move}, and the engine finds no real fault in it.",
+  "The whole nave falls silent. {move} stakes the {piece}, and rightly.",
+  "With {move} the {piece} is laid on the altar. The engine approves.",
+  "Bold and correct: {move} leaves the {piece} to be captured.",
+  "{move} is the kind of move chronicles are written for. The {piece} is offered soundly.",
+  "Few would dare {move}. The {piece} can be won, yet the position justifies it.",
+  "{side} dares to part with material. {move} stands up to the engine's scrutiny.",
+  "The Inquisition finds no fault in this daring: {move} offers the {piece} for good reason.",
+  "Even the gargoyles lean in. {move} is a sound sacrifice.",
+  "{move} puts the {piece} at risk on purpose, and the engine rates the position as sound.",
+];
+
 export const BEST_TAGS = [
   "It is the engine's own choice.",
   "Stockfish would have played the same.",

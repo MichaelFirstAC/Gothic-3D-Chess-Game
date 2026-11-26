@@ -227,17 +227,25 @@ export function createScene(container) {
   // At low camera angles, shift the view upward like an architect's lens, so
   // the height of the nave shows and its verticals stay upright.
   let shift = 0;
+  // Pixels at the left and at the foot that something covers. The view is moved
+  // so that what the camera looks at is in the middle of the rest.
+  const covered = { left: 0, bottom: 0 };
+  let applied = '';
   const raiseView = () => {
     const polar = Math.acos(THREE.MathUtils.clamp(camera.position.y / camera.position.length(), -1, 1));
     const next = THREE.MathUtils.smoothstep(polar, 1.05, 1.52) * 0.16;
     const { clientWidth: width, clientHeight: height } = container;
-    if (!width || !height || (Math.abs(next - shift) < 0.0005 && camera.view?.fullHeight === height)) return;
+    if (!width || !height) return;
+    const key = `${width} ${height} ${covered.left} ${covered.bottom}`;
+    if (Math.abs(next - shift) < 0.0005 && key === applied) return;
     shift = next;
-    camera.setViewOffset(width, height, 0, -shift * height, width, height);
+    applied = key;
+    camera.setViewOffset(width, height, -covered.left / 2, -shift * height + covered.bottom / 2, width, height);
   };
 
   return {
     renderer, scene, camera, quality, fitResolution,
+    setCovered(left, bottom) { Object.assign(covered, { left, bottom }); },
     update(time, elapsed) {
       quality.frame(elapsed);
       flickerCandles(time);
@@ -265,7 +273,7 @@ export function createBestMoveArrow(scene) {
     depthTest: false,
     fog: false,
   });
-  const core = material(0.88);
+  const core = material(0.92);
   const halo = material(0.28);
 
   // Outline pointing along +y, laid flat so that it points toward -z.
@@ -309,15 +317,15 @@ export function createBestMoveArrow(scene) {
       if (isKnightShift(move.from, move.to)) {
         const { x, z } = direction;
         add(
-          angled(x, z, { start: 0.2, reach: 0.1, shaft: 0.13, head: 0.34, headLength: 0.5 }),
-          angled(x, z, { start: 0.2, reach: 0.05, shaft: 0.065, head: 0.25, headLength: 0.4 }),
+          angled(x, z, { start: 0.2, reach: 0.08, shaft: 0.095, head: 0.25, headLength: 0.42 }),
+          angled(x, z, { start: 0.2, reach: 0.04, shaft: 0.048, head: 0.19, headLength: 0.34 }),
         );
         arrow.position.copy(from).setY(0.06);
         arrow.rotation.y = 0;
         return;
       }
       const length = direction.length() - 0.1;
-      add(outline(length, 0.13, 0.34, 0.5), outline(length - 0.05, 0.065, 0.25, 0.4));
+      add(outline(length, 0.095, 0.25, 0.42), outline(length - 0.07, 0.048, 0.19, 0.34));
       arrow.position.copy(from).addScaledVector(direction.normalize(), 0.2).setY(0.06);
       arrow.rotation.y = Math.atan2(-direction.x, -direction.z);
     },
@@ -350,13 +358,15 @@ export function createHighlights(scene) {
   const styles = {
     selected: flat(new THREE.PlaneGeometry(0.96, 0.96), 0xffc14d, 0.5),
     last: flat(new THREE.PlaneGeometry(0.96, 0.96), 0x7d5cff, 0.3),
+    // In a review, the squares of the move being judged.
+    played: flat(new THREE.PlaneGeometry(0.98, 0.98), 0xffa200, 0.62),
     hover: flat(new THREE.PlaneGeometry(0.96, 0.96), 0xffffff, 0.13),
     target: flat(new THREE.CircleGeometry(0.15, 32), 0x62f0b4, 0.8),
     capture: flat(new THREE.RingGeometry(0.4, 0.49, 40), 0xff5a4a, 0.95),
     check: flat(new THREE.PlaneGeometry(1, 1), 0xffffff, 0.9),
   };
   styles.check.material.map = glow;
-  const heights = { last: 0.004, check: 0.006, selected: 0.008, hover: 0.01, target: 0.012, capture: 0.012 };
+  const heights = { last: 0.004, played: 0.004, check: 0.006, selected: 0.008, hover: 0.01, target: 0.012, capture: 0.012 };
 
   return {
     // marks: [{ square, style }]

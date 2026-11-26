@@ -32,12 +32,28 @@ Copy-Item .env.example .env
 
 A variable already set in your system environment takes priority over `.env`. `.env` is ignored by git. None of these variables has the `VITE_` prefix, so Vite never puts them in browser code. Only the server endpoints read them. Restart `npm run dev` after changing them.
 
+## Menus
+
+The game opens on a starting page with **Play**, **Review** and **Settings**. A game left half way adds **Resume game**. **Review** judges the last game played here or one you import.
+
+The menu runs down one side. Beside it, thirty famous moments from chess history go by in a random order, thirty seconds each, with the camera drifting round the board. Each is set up just before its celebrated move, which is then played, in silence, and a caption names the game. All thirty are shown before any repeats. With reduced motion the camera stands still.
+
+The moments are stored as the moves of each game (`src/famousMoments.js`), and the tests play every one through the rules engine. All thirty are games between two players. Seventeen are backed by a published record: the six championship games from 2013 to 2024 were copied from Wikipedia’s match pages, the four online duels from Chess.com’s public data API, and seven older ones (the Immortal, Evergreen and Century games, Kasparov–Topalov 1999, both Deep Blue games and Fischer–Spassky game six) were compared with Wikipedia and matched. The other thirteen older games have not been checked against a published source. Wikipedia notes that the usual endings of the Immortal and Evergreen games may not all have been played on the board.
+
+During a game the board has the whole window, with a few small buttons at its edges:
+
+- **Top left:** whose turn it is and the pieces taken. When the game is over, **Inquisition** and **New game** appear here.
+- **Top right:** **Draw**, **Resign** and a gear for settings. Draw and Resign ask before doing anything, with **Cancel** already chosen. **Claim draw** appears only when a claim is possible.
+- **Bottom left:** **Flip**, **Take back** and **Moves**, which shows or hides the list of moves.
+
+**Settings** holds sound and music, **Turn board after each move**, a reminder of the camera controls and the way back to the **Main menu**. A side panel appears only during a review.
+
 ## Controls
 
 - Click a piece, then a highlighted square. Green dots are moves, red rings are captures.
 - Drag to rotate, scroll to zoom, right-drag to pan. You can tilt low enough to look over the rim into the drop; panning stops a short way from the board, so the camera never goes under the rock or leaves the building.
-- Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving; the camera eases up to speed and glides to a stop when you let go. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored while a dialog is open or you are typing.
-- **Flip board** swaps sides; **Turn board after each move** does it automatically.
+- Or use the keyboard: **A/D** rotate around the board, **W/S** tilt (up toward a top view, down toward eye level), **Q/E** zoom out and in. Hold a key to keep moving; the camera eases up to speed and glides to a stop when you let go. The keys follow their physical positions, so they work the same on AZERTY and other layouts. They are ignored on the starting page, while a dialog is open or while you are typing.
+- **Flip** swaps sides; **Turn board after each move**, in Settings, does it automatically.
 
 ## Loading
 
@@ -65,7 +81,7 @@ If your system asks for **reduced motion**, shattering, promotion and take-back 
 
 ## Sound and music
 
-The controls are at the bottom of the panel. **Mute sound** and the volume slider next to it govern sound effects: selecting, moving (knights sound different), castling, capturing, reforming, promoting, check, checkmate, stalemate and draws, taking back, illegal clicks and panel buttons. **Music** is a separate toggle with its own volume, **off by default**: a slow organ drone that moves among D Dorian and Aeolian chords every 8 to 16 seconds, with an occasional distant choir. It fades in and out over two seconds and dips under sound effects. Both sets of settings are remembered in your browser.
+The controls are in **Settings**. **Mute sound** and the volume slider next to it govern sound effects: selecting, moving (knights sound different), castling, capturing, reforming, promoting, check, checkmate, stalemate and draws, taking back, illegal clicks and buttons. **Music** is a separate toggle with its own volume, **off by default**: a slow organ drone that moves among D Dorian and Aeolian chords every 8 to 16 seconds, with an occasional distant choir. It fades in and out over two seconds and dips under sound effects. Both sets of settings are remembered in your browser.
 
 **All audio is synthesised** with the Web Audio API and played through a generated cathedral reverb of about four seconds. Browsers only allow audio after your first click or key press. To replace a sound with a recording you have the rights to use (a CC0 file, for example), put it in `public/sounds/` and list it in `SOUND_FILES` in `src/audio.js`; nothing else needs to change.
 
@@ -77,10 +93,12 @@ The game also measures its frame times and, if they stay slow, steps down in sta
 
 ## The Inquisition (game review)
 
-Choose **Inquisition** at any point in a game, or in the dialog when it ends. Your game is left as it was, and **Exit review** returns to it. Moving pieces is disabled while reviewing.
+Choose **Review** on the starting page, or **Inquisition** when a game ends. Your game is left as it was, and **Exit review** returns to where you were. Moving pieces is disabled while reviewing.
 
 - Click a move in the Chronicle, use the step buttons, or press the arrow keys (left and right step; up and down, or Home and End, jump to either end).
-- The **green arrow** is the engine's preferred move in place of the one just shown. Before the first move, it is the suggested opening move.
+- The panel is laid out to fit the window: the comment on the move shown sits above the move list, and the step buttons stay at the foot. The Verdict tab has each side's accuracy, how many moves of each kind it made, and the three lessons.
+- The **yellow-tinted squares** are where the move that was played began and ended.
+- The **green arrow** is the engine's preferred move in place of it, shown unless the move was rated Brilliant or Best. Before the first move, it is the suggested opening move. A key under the comment names both.
 - The **bar** beside the panel shows the evaluation from White's side, in pawns. `M3` means mate in 3.
 - **Cancel** stops an analysis in progress.
 - The engine searches to depth 14. Add `?depth=18` to the address for a deeper, slower search (6 to 22).
@@ -91,11 +109,20 @@ Each move is judged by how much winning chance the mover gave up, using `win% = 
 
 | Mark | Rating | Win chance lost |
 | --- | --- | --- |
+| !! | Brilliant | A sound sacrifice (see below) |
 | ★ | Best | The engine's own choice |
 | none | Good | Under 2 points |
 | ?! | Inaccuracy | 2 to under 10 |
 | ? | Mistake | 10 to 20 |
 | ?? | Blunder | Over 20, or missing or allowing a forced mate |
+
+**Brilliant** is a move that would be rated Best or Good and that also:
+
+- puts a knight, bishop, rook or queen where the opponent can win it, leaving its side at least 2 points of material down once every recapture is counted (pawn 1, knight and bishop 3, rook 5, queen 9);
+- gives something that was not lost already, and that cannot be won straight back elsewhere;
+- leaves its side at least about level (45% or better), when it was not already 5 or more points of material ahead and had more than one legal move.
+
+Only the piece moved is considered, so leaving a different piece to be taken does not count. This is the project's own rule; it is rare by design and will not always agree with other sites.
 
 Accuracy for each side is the average over its moves of `103.1668 * exp(-0.04354 * loss) - 3.1669`, limited to 0–100. It is a simpler average than the one Lichess shows, and it will not match the accuracy figures Chess.com reports.
 
@@ -105,9 +132,9 @@ The lite engine and a fixed depth make this a quick review. A deeper search can 
 
 Stockfish decides how good each move is. The commentary only puts its findings into words.
 
-**Without AI (always available).** The browser comments on every move and gives three lessons at the final position, with no network request. For each marked move it first checks what the engine's lines show: a mate allowed or missed, a stalemate, a piece left to be taken, a fork, material won or lost, an early queen, a king move that gives up castling, a loosened king shield or a knight on the edge. It then picks wording for that case from a few hundred phrases. A phrase is not reused within a game until the others in its group have been, and the same game always reads the same way. When no reason can be established, it says so instead of inventing one. Marked moves with no clear tactic are the most common case, so that is where you will notice repetition first.
+**Without AI (always available).** The browser comments on every move and gives three lessons on the Verdict tab, with no network request. For each marked move it first checks what the engine's lines show: a mate allowed or missed, a stalemate, a piece left to be taken, a fork, material won or lost, an early queen, a king move that gives up castling, a loosened king shield or a knight on the edge. It then picks wording for that case from a few hundred phrases. A phrase is not reused within a game until the others in its group have been, and the same game always reads the same way. When no reason can be established, it says so instead of inventing one. Marked moves with no clear tactic are the most common case, so that is where you will notice repetition first.
 
-**With Groq (optional).** The reviewed side's mistakes and blunders plus the three largest swings, at most six per game, are sent in one request. Their explanations replace the stock text, and dotted underlines mark them. For an imported game, the reviewed side is the player whose name you looked up. Otherwise both sides are reviewed. If Groq is unavailable, over its limit or not set up, the stock text stays and the panel says why. Groq's free plan has request and token limits; see your [limits page](https://console.groq.com/settings/limits).
+**With Groq (optional).** The reviewed side's mistakes and blunders plus the three largest swings, at most six per game, are sent in one request. Their explanations replace the stock text, and dotted underlines mark them. For an imported game, the reviewed side is the player whose name you looked up. Otherwise both sides are reviewed. If Groq is unavailable, over its limit or not set up, the stock text stays and the Verdict tab says why. Groq's free plan has request and token limits; see your [limits page](https://console.groq.com/settings/limits).
 
 **AI explanations can be wrong.** In testing, `openai/gpt-oss-120b` often misread captures and piece positions. The server therefore tells the model, in words worked out by the rules engine, where every piece stands, what each move in the engine's lines does and how the material ends up. It then drops any explanation that names a move outside those lines, puts a piece on a square it never occupies, or reports lost material the lines do not show. These checks catch only some errors. Wrong strategic claims and misdescribed sequences still get through, so trust the ratings and the arrow over the prose.
 
@@ -115,7 +142,7 @@ For each key moment, the server sends Groq the position, the move played, the en
 
 ## Importing games
 
-Choose **Import**, enter a Chess.com username and pick a game from the most recent month that player was active (up to 50 games, newest first). It opens in review mode, seen from that player's side. Only standard chess is listed.
+Choose **Review**, then **Import a game** (with no game played yet, Review goes straight there). Enter a Chess.com username and pick a game from the most recent month that player was active (up to 50 games, newest first). It opens in review mode, seen from that player's side. Only standard chess is listed.
 
 Game data comes from [Chess.com's Published-Data API](https://www.chess.com/news/view/published-data-api), the official read-only public API. The app does not log in, scrape pages or use any other Chess.com endpoint. The server caches replies in memory for five minutes. The data can lag behind the site. This project is not affiliated with or endorsed by Chess.com.
 
@@ -176,9 +203,10 @@ Not covered:
 | `src/brokenRose.js`, `src/roseShape.js` | The broken east window, its glass and the moonlight through it |
 | `src/brokenGlass.js`, `src/nightSky.js` | The other broken windows, and the sky and moon |
 | `src/pieceMarble.js` | The marble finish of the pieces |
-| `src/main.js` | Input, animation, side panel |
+| `src/main.js` | Input, animation, the menus and in-game buttons |
 | `src/reviewMode.js` | Review mode: stepping, ratings, eval bar, commentary |
 | `src/importDialog.js` | Import by username |
+| `src/showcase.js`, `src/famousMoments.js` | The famous moments behind the starting page |
 | `src/analysis/` | Stockfish wrapper, review pass, scoring math, key moments, commentary |
 | `src/analysis/narrator.js`, `phrasebook.js` | Commentary written without AI: the checks, then the wording |
 | `src/analysis/grounding.js` | Facts given to the AI model, and checks on its replies |

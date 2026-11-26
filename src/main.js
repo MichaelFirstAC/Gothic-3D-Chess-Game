@@ -1,4 +1,4 @@
-// Connects the rules engine to the 3D board and the side panel.
+// Connects the rules engine to the 3D board, the menus and what is shown over it.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Game, inCheck, colorOf, squareName, applyMove, legalMoves } from './engine.js';
@@ -13,15 +13,16 @@ import { createKeyTracker, createKeyMotion, clampTarget } from './keyCamera.js';
 import { openImportDialog } from './importDialog.js';
 import { showProgress, showFailure, nextPaint, reveal } from './loading.js';
 import { drawEverything, untilSmooth } from './warmup.js';
+import { createShowcase } from './showcase.js';
 
 const NAMES = { w: 'White', b: 'Black' };
-const GLYPHS = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+const GLYPHS = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 const PIECE_NAMES = { q: 'Queen', r: 'Rook', b: 'Bishop', n: 'Knight' };
 const VALUE_ORDER = 'qrbnp';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
-const { renderer, scene, camera, update, quality, fitResolution } = createScene(stage);
+const { renderer, scene, camera, update, quality, fitResolution, setCovered } = createScene(stage);
 const highlights = createHighlights(scene);
 const bestArrow = createBestMoveArrow(scene);
 const makePiece = createPieceFactory();
@@ -38,7 +39,11 @@ const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let forceReducedMotion = false; // development aid
 const audio = createAudio();
 const boardView = createBoardView({
-  scene, makePiece, sound: (name) => audio.play(name), reducedMotion: () => motion.matches || forceReducedMotion,
+  scene,
+  makePiece,
+  // The moments shown on the starting page are played in silence.
+  sound: (name) => { if (!onMenu()) audio.play(name); },
+  reducedMotion: () => motion.matches || forceReducedMotion,
 });
 
 const syncPieces = (state = game.state, history = game.history) => boardView.sync(state, history);
@@ -123,7 +128,10 @@ function turnCamera(side) {
 }
 
 let loading = true;
-const cameraKeys = createKeyTracker(window, () => loading || $('dialog').open);
+// Which is showing: the starting page, or the board.
+const onMenu = () => document.body.dataset.screen === 'menu';
+const inDialog = () => Boolean(document.querySelector('dialog[open]'));
+const cameraKeys = createKeyTracker(window, () => loading || onMenu() || inDialog());
 
 const keyMotion = createKeyMotion();
 
@@ -143,6 +151,8 @@ function resize() {
   fitResolution();
   renderer.setSize(width, height);
   camera.aspect = width / height;
+  // A tall, narrow screen takes a wider view, so that the whole board is in it.
+  camera.zoom = Math.min(1, camera.aspect / 0.72);
   camera.updateProjectionMatrix();
   if (!cameraMoved) homeCamera();
 }
@@ -162,6 +172,7 @@ function ask(title, text, choices) {
     let answer = null;
     $('dialog-actions').replaceChildren(...choices.map(({ label, value, glyph }) => {
       const button = document.createElement('button');
+      button.autofocus = value === false;
       if (glyph) {
         const icon = document.createElement('span');
         icon.className = 'glyph';
@@ -180,7 +191,7 @@ function ask(title, text, choices) {
 const confirmAction = (title, text, yes, no = 'Cancel') =>
   ask(title, text, [{ label: yes, value: true }, { label: no, value: false }]);
 
-// ---------------------------------------------------------------- panel
+// ---------------------------------------------------------------- over the board
 
 function resultText({ winner, reason }) {
   return winner
@@ -189,6 +200,8 @@ function resultText({ winner, reason }) {
 }
 
 function renderMarks() {
+  // On the starting page the board is not showing the game.
+  if (onMenu() && showcase?.running) return;
   const marks = [];
   const last = game.history.at(-1);
   if (last) marks.push({ square: last.move.from, style: 'last' }, { square: last.move.to, style: 'last' });
@@ -208,16 +221,35 @@ function renderMarks() {
   highlights.show(marks);
 }
 
+// The sign of the piece that made a move, in its side's colour. It is only for
+// the eye: the move's own letters already name the piece.
+function pieceIcon(piece) {
+  const icon = document.createElement('span');
+  icon.className = `piece-icon ${colorOf(piece)}`;
+  icon.setAttribute('aria-hidden', 'true');
+  // The selector keeps the sign from being drawn as an emoji.
+  icon.textContent = GLYPHS[piece.toLowerCase()] + '︎';
+  return icon;
+}
+
 // decorate(index, san) may return an element to show in place of the plain text.
-function renderMoveList(history, decorate = (index, san) => san) {
+// `list` is the review panel's list unless another is named.
+function renderMoveList(history, decorate = (index, san) => san, list = 'moves') {
   const rows = [];
-  history.forEach(({ state, san }, index) => {
+  history.forEach(({ state, san, move }, index) => {
     const white = state.turn === 'w';
-    const cell = decorate(index, san);
+    let cell = decorate(index, san);
+    if (typeof cell === 'string') {
+      const text = cell;
+      cell = document.createElement('span');
+      cell.append(text);
+    }
+    cell.classList.add('ply');
+    cell.prepend(pieceIcon(move.piece));
     if (white || !rows.length) rows.push({ number: state.fullmove, w: white ? cell : '…', b: white ? '' : cell });
     else rows.at(-1).b = cell;
   });
-  $('moves').replaceChildren(...rows.map((row) => {
+  $(list).replaceChildren(...rows.map((row) => {
     const item = document.createElement('li');
     for (const [className, content] of [['number', `${row.number}.`], ['san', row.w], ['san', row.b]]) {
       const cell = document.createElement('span');
@@ -227,18 +259,26 @@ function renderMoveList(history, decorate = (index, san) => san) {
     }
     return item;
   }));
+  if (!rows.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No moves yet';
+    $(list).append(empty);
+  }
 }
 
-function renderPanel() {
+// What lies over the board during a game. Buttons that cannot be used just now
+// are not shown at all.
+function renderHud() {
   const check = inCheck(game.state);
   const status = game.result
     ? resultText(game.result)
     : { main: `${NAMES[game.state.turn]} to move`, detail: check ? 'Check!' : '' };
   const claims = game.drawClaims();
   if (claims.length) status.detail = `A draw may be claimed: ${claims.join(', ')}`;
-  $('status-main').textContent = status.main;
-  $('status-detail').textContent = status.detail;
-  $('status').classList.toggle('alert', check || Boolean(game.result));
+  $('turn-main').textContent = status.main;
+  $('turn-detail').textContent = status.detail;
+  $('turn').classList.toggle('alert', check || Boolean(game.result));
 
   for (const color of ['w', 'b']) {
     $(`taken-${color}`).textContent = game.history
@@ -249,22 +289,20 @@ function renderPanel() {
       .join('');
   }
 
-  renderMoveList(game.history);
-  $('moves').scrollTop = $('moves').scrollHeight;
+  renderMoveList(game.history, undefined, 'history');
+  $('history').scrollTop = $('history').scrollHeight;
 
   const over = Boolean(game.result);
   const canClaim = !over && (claims.length > 0 || game.intendedDrawClaims().length > 0);
-  $('undo').disabled = busy || !game.history.length;
-  $('claim').disabled = busy || !canClaim;
-  $('offer').disabled = busy || over;
-  $('resign').disabled = busy || over;
-  $('new-game').disabled = busy;
-  $('review').disabled = busy || !game.history.length;
-  $('import').disabled = busy;
+  $('claim').hidden = !canClaim;
+  $('offer').hidden = $('resign').hidden = over;
+  $('after-game').hidden = !over;
+  $('undo').hidden = !game.history.length;
+  for (const id of ['undo', 'claim', 'offer', 'resign', 'new-game', 'review']) $(id).disabled = busy;
 }
 
 function render() {
-  renderPanel();
+  renderHud();
   renderMarks();
 }
 
@@ -275,8 +313,10 @@ async function announceResult() {
     { label: 'Inquisition', value: 'review' },
     { label: 'New game', value: 'new' },
     { label: 'View board', value: 'stay' },
+    { label: 'Main menu', value: 'menu' },
   ]);
   if (choice === 'new') newGame();
+  if (choice === 'menu') showMenu();
   if (choice === 'review') reviewCurrentGame();
 }
 
@@ -299,18 +339,28 @@ const review = createReviewMode({
   exit() {
     syncPieces();
     render();
-    if (sideBeforeImport) turnCamera(sideBeforeImport);
+    const side = sideBeforeImport;
     sideBeforeImport = null;
+    // Back to wherever the review was asked for.
+    if (reviewFromMenu) {
+      if (side) viewSide = side;
+      cameraMoved = false;
+      showMenu();
+    } else if (side) turnCamera(side);
+    reviewFromMenu = false;
   },
 });
 
 let sideBeforeImport = null;
+let reviewFromMenu = false;
 
 // Reviews a game fetched by username, seen from that player's side of the board.
 async function importGame() {
   if (busy || review.active) return;
   const record = await openImportDialog();
   if (!record || busy || review.active) return;
+  reviewFromMenu = onMenu();
+  showBoard();
   selected = hovered = -1;
   canvas.classList.remove('pointing');
   sideBeforeImport = viewSide;
@@ -320,6 +370,8 @@ async function importGame() {
 
 function reviewCurrentGame() {
   if (busy || review.active) return;
+  reviewFromMenu = onMenu();
+  showBoard();
   selected = hovered = -1;
   canvas.classList.remove('pointing');
   review.open({
@@ -342,7 +394,7 @@ async function makeMove(from, to) {
   const options = game.movesFrom(from).filter((m) => m.to === to);
   if (!options.length) return;
   busy = true;
-  renderPanel();
+  renderHud();
   let promotion = null;
   if (options[0].promotion) {
     const color = NAMES[game.state.turn];
@@ -377,7 +429,9 @@ async function announceAfter(settled) {
   const finished = game;
   const moves = game.history.length;
   await settled;
-  if (game === finished && game.history.length === moves && !busy && !review.active) announceResult();
+  if (game === finished && game.history.length === moves && !busy && !review.active && !onMenu()) {
+    announceResult();
+  }
 }
 
 function newGame() {
@@ -477,14 +531,10 @@ function markPointed() {
   }
 }
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !dialog.open && !review.active) select(-1);
+  if (event.key === 'Escape' && !inDialog() && !review.active) select(-1);
 });
 
-$('new-game').addEventListener('click', async () => {
-  if (game.history.length && !game.result
-      && !(await confirmAction('New game', 'Abandon the current game?', 'Abandon'))) return;
-  newGame();
-});
+$('new-game').addEventListener('click', () => { if (!busy) newGame(); });
 
 // Take-back plays the move in reverse. Clicks made while it runs are ignored.
 $('undo').addEventListener('click', async () => {
@@ -564,11 +614,142 @@ const flipBoard = () => {
 $('flip').addEventListener('click', flipBoard);
 $('review-flip').addEventListener('click', flipBoard);
 $('review').addEventListener('click', reviewCurrentGame);
-$('import').addEventListener('click', importGame);
+
+$('show-moves').addEventListener('click', () => {
+  const list = $('history');
+  list.hidden = !list.hidden;
+  $('show-moves').setAttribute('aria-expanded', String(!list.hidden));
+  list.scrollTop = list.scrollHeight;
+});
+
+// ---------------------------------------------------------------- menus
+
+const unfinished = () => game.history.length > 0 && !game.result;
+
+function showMenu() {
+  selected = hovered = -1;
+  canvas.classList.remove('pointing');
+  render();
+  keepView();
+  // A game left half way can be taken up again.
+  $('menu-resume').hidden = !unfinished();
+  $('menu-play').textContent = unfinished() ? 'New game' : 'Play';
+  $('menu-play').classList.toggle('primary', !unfinished());
+  document.body.dataset.screen = 'menu';
+  cameraKeys.clear();
+  (unfinished() ? $('menu-resume') : $('menu-play')).focus();
+}
+
+function showBoard() {
+  const leaving = onMenu();
+  document.body.dataset.screen = 'board';
+  document.activeElement?.blur();
+  if (leaving) endShowcase();
+}
+
+// The player's own view, kept while the starting page borrows the camera.
+let kept = null;
+function keepView() {
+  if (!onMenu()) kept = { position: camera.position.clone(), target: controls.target.clone() };
+}
+
+// Puts the board and the camera back as the player left them.
+function endShowcase() {
+  showcase.stop();
+  setCovered(0, 0);
+  syncPieces();
+  render();
+  resize();
+  if (cameraMoved && kept) {
+    controls.target.copy(kept.target);
+    camera.position.copy(kept.position);
+    controls.update();
+  } else homeCamera();
+}
+
+$('menu-resume').addEventListener('click', showBoard);
+$('menu-play').addEventListener('click', async () => {
+  if (unfinished()
+      && !(await confirmAction('New game', 'Abandon the game in progress?', 'Abandon'))) return;
+  // A move still being made is left to finish before the board is cleared.
+  if (busy) return;
+  showBoard();
+  if (game.history.length) newGame();
+});
+$('menu-review').addEventListener('click', async () => {
+  if (!game.history.length) {
+    importGame();
+    return;
+  }
+  const choice = await ask('Review', 'Which game shall the Inquisition judge?', [
+    { label: 'The last one played here', value: 'last' },
+    { label: 'Import a game', value: 'import' },
+    { label: 'Cancel', value: false },
+  ]);
+  if (choice === 'last') reviewCurrentGame();
+  if (choice === 'import') importGame();
+});
+
+const settings = $('settings');
+function openSettings() {
+  if (settings.open) return;
+  $('to-menu').hidden = onMenu();
+  settings.showModal();
+}
+$('open-settings').addEventListener('click', openSettings);
+$('menu-settings').addEventListener('click', openSettings);
+$('settings-done').addEventListener('click', () => settings.close());
+$('to-menu').addEventListener('click', () => {
+  settings.close();
+  if (review.active) {
+    reviewFromMenu = true;
+    review.close();
+  } else showMenu();
+});
 
 $('auto-turn').addEventListener('change', (event) => {
   if (event.target.checked && controls.enabled) turnCamera(game.state.turn);
 });
+
+// ---------------------------------------------------------------- showcase
+
+// How much of the stage the menu covers, as [left, bottom] in pixels.
+function menuCover() {
+  const box = $('menu').getBoundingClientRect();
+  return box.width < stage.clientWidth * 0.75 ? [box.width, 0] : [0, box.height];
+}
+
+const showcase = createShowcase({
+  sync: (state, history) => boardView.sync(state, history),
+  animate: (move, history) => boardView.animateMove(move, history),
+  mark: (marks) => highlights.show(marks),
+  camera({ azimuth, polar, distance }) {
+    const [left, bottom] = menuCover();
+    setCovered(left, bottom);
+    // Far enough back for the board to fit in what the menu leaves free.
+    const width = Math.max(1, stage.clientWidth - left);
+    const height = Math.max(1, stage.clientHeight - bottom);
+    // On a tall screen the width of the whole stage is the limit.
+    const zoom = Math.min(0.9 * Math.min(1, width / height / 0.95, height / stage.clientHeight + 0.12),
+      camera.aspect / 0.8);
+    if (Math.abs(camera.zoom - zoom) > 0.001) {
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+    const far = Math.min(controls.maxDistance, Math.max(20, 15.5 / Math.min(1.4, width / height)));
+    camera.position.setFromSpherical(new THREE.Spherical(far * distance, polar, azimuth));
+    camera.lookAt(0, 0, 0);
+  },
+  caption(details) {
+    const box = $('moment');
+    box.hidden = !details;
+    if (!details) return;
+    for (const part of ['title', 'who', 'note']) box.querySelector(`.moment-${part}`).textContent = details[part];
+    // The move is named once it has been made.
+    box.querySelector('.moment-move').textContent = details.played ? details.move : '\u00a0';
+  },
+  veil: (dark) => $('veil').classList.toggle('dark', dark),
+}, { reducedMotion: () => motion.matches || forceReducedMotion });
 
 // ---------------------------------------------------------------- audio
 
@@ -577,7 +758,7 @@ for (const type of ['pointerdown', 'keydown']) {
   window.addEventListener(type, () => audio.unlock(), { capture: true });
 }
 document.addEventListener('click', (event) => {
-  if (event.target.closest?.('#panel button, #dialog button')) audio.play('click');
+  if (event.target.closest?.('button')) audio.play('click');
 });
 
 $('sound-mute').checked = audio.settings.muted;
@@ -603,7 +784,15 @@ function drawFrame(now) {
   lastFrame = now;
   runTweens(performance.now());
   boardView.update(elapsed / 1000);
-  if (controls.enabled) {
+  if (onMenu()) {
+    // A move still being made in the game is let finish before the board is
+    // borrowed.
+    if (!busy) {
+      // Time does not pass for it until it can be seen.
+      if (showcase.running) showcase.update(loading ? 0 : elapsed / 1000);
+      else showcase.start();
+    }
+  } else if (controls.enabled) {
     // A long gap between frames must not fling the camera.
     steerFromKeys(Math.min(elapsed, 50) / 1000);
     controls.update();
@@ -626,7 +815,7 @@ async function warmUp() {
   showProgress('Raising the vaults…', 0.45);
   await nextPaint();
   // The markers and the arrow are only made when first shown.
-  highlights.show(['selected', 'last', 'hover', 'target', 'capture', 'check']
+  highlights.show(['selected', 'last', 'hover', 'target', 'capture', 'check', 'played']
     .map((style, square) => ({ square, style })));
   bestArrow.show({ from: 1, to: 18 });
   try {
@@ -686,6 +875,7 @@ if (import.meta.env.DEV) {
     camera,
     controls,
     arrow: bestArrow,
+    showcase,
     quality,
     info: () => ({ ...renderer.info.render, geometries: renderer.info.memory.geometries }),
   };

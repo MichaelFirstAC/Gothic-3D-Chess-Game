@@ -279,6 +279,9 @@ function praise(facts, base, dealer) {
   const { move, state, rated, best } = facts;
   const kind = praiseKind(facts);
   const values = { ...base };
+  if (rated.classification === 'brilliant') {
+    return fill(dealer.pick(book.BRILLIANT), { ...values, piece: pieceName(move.piece) });
+  }
   if (kind === 'capture') {
     values.piece = pieceName(move.captured);
     values.square = squareName(move.flag === 'ep' ? move.to + (state.turn === 'w' ? -8 : 8) : move.to);
